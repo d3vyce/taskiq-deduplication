@@ -30,7 +30,8 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         default_ttl: Default lock TTL in seconds.
         key_prefix: Prefix for all Redis lock keys.
         raise_on_duplicate: If ``True``, ``pre_send`` raises ``DuplicateTaskError``
-            on a duplicate. If ``False``, it logs a warning and sends anyway.
+            on a duplicate. Defaults to ``False`` — duplicates are logged and
+            sent anyway unless you opt in to raising.
     """
 
     def __init__(
@@ -39,7 +40,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         default_deduplication: bool = True,
         default_ttl: int = 300,
         key_prefix: str = "taskiq:deduplication",
-        raise_on_duplicate: bool = True,
+        raise_on_duplicate: bool = False,
     ) -> None:
         self.redis_url = redis_url
         self.default_deduplication = default_deduplication

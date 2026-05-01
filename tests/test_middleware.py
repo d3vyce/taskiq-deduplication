@@ -19,9 +19,9 @@ def middleware(fake_redis):
 
 
 @pytest.fixture
-def middleware_no_raise(fake_redis):
+def middleware_raise(fake_redis):
     mw = RedisDeduplicationMiddleware(
-        redis_url="redis://localhost", raise_on_duplicate=False
+        redis_url="redis://localhost", raise_on_duplicate=True
     )
     mw._redis = fake_redis
     return mw
@@ -112,19 +112,17 @@ class TestPreSend:
         assert result is msg
 
     @pytest.mark.anyio
-    async def test_duplicate_raises(self, middleware, make_message):
+    async def test_duplicate_raises_when_opted_in(self, middleware_raise, make_message):
         msg = make_message()
-        await middleware.pre_send(msg)
+        await middleware_raise.pre_send(msg)
         with pytest.raises(DuplicateTaskError):
-            await middleware.pre_send(make_message())
+            await middleware_raise.pre_send(make_message())
 
     @pytest.mark.anyio
-    async def test_duplicate_no_raise_returns_message(
-        self, middleware_no_raise, make_message
-    ):
+    async def test_duplicate_no_raise_by_default(self, middleware, make_message):
         msg = make_message()
-        await middleware_no_raise.pre_send(msg)
-        result = await middleware_no_raise.pre_send(make_message())
+        await middleware.pre_send(msg)
+        result = await middleware.pre_send(make_message())
         assert result is not None
 
     @pytest.mark.anyio
