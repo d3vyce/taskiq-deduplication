@@ -55,7 +55,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         if self._redis is not None:
             await self._redis.aclose()
 
-    def default_build_deduplication_key(self, message: TaskiqMessage) -> str:
+    def _build_deduplication_key(self, message: TaskiqMessage) -> str:
         explicit_key: str | None = message.labels.get(DEDUP_EXPLICIT_KEY_LABEL)
         if explicit_key is not None:
             return f"{self.key_prefix}:{explicit_key}"
@@ -97,7 +97,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
             return message
 
         assert self._redis is not None
-        key = self.default_build_deduplication_key(message)
+        key = self._build_deduplication_key(message)
         ttl = self._get_ttl(message.labels)
 
         logger.debug("Acquiring queue lock %s for task %s", key, message.task_name)
@@ -123,7 +123,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
             return message
 
         assert self._redis is not None
-        key = self._exec_key(self.default_build_deduplication_key(message))
+        key = self._exec_key(self._build_deduplication_key(message))
         ttl = self._get_ttl(message.labels)
 
         logger.debug("Acquiring execution lock %s for task %s", key, message.task_name)
@@ -150,7 +150,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
     ) -> None:
         if not self._is_enabled(message.labels):
             return
-        base_key = self.default_build_deduplication_key(message)
+        base_key = self._build_deduplication_key(message)
         await self._release_if_owned(base_key, message.task_id, "queue lock")
         await self._release_if_owned(
             self._exec_key(base_key), message.task_id, "execution lock"
@@ -164,7 +164,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
     ) -> None:
         if not self._is_enabled(message.labels):
             return
-        base_key = self.default_build_deduplication_key(message)
+        base_key = self._build_deduplication_key(message)
         await self._release_if_owned(base_key, message.task_id, "queue lock")
         await self._release_if_owned(
             self._exec_key(base_key), message.task_id, "execution lock"

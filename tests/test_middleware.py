@@ -31,42 +31,42 @@ class TestDefaultBuildDeduplicationKey:
     def test_same_kwargs_same_key(self, middleware, make_message):
         m1 = make_message(kwargs={"a": 1, "b": 2})
         m2 = make_message(kwargs={"a": 1, "b": 2})
-        assert middleware.default_build_deduplication_key(
+        assert middleware._build_deduplication_key(
             m1
-        ) == middleware.default_build_deduplication_key(m2)
+        ) == middleware._build_deduplication_key(m2)
 
     def test_different_kwargs_different_key(self, middleware, make_message):
         m1 = make_message(kwargs={"a": 1})
         m2 = make_message(kwargs={"a": 2})
-        assert middleware.default_build_deduplication_key(
+        assert middleware._build_deduplication_key(
             m1
-        ) != middleware.default_build_deduplication_key(m2)
+        ) != middleware._build_deduplication_key(m2)
 
     def test_kwarg_order_invariant(self, middleware, make_message):
         m1 = make_message(kwargs={"a": 1, "b": 2})
         m2 = make_message(kwargs={"b": 2, "a": 1})
-        assert middleware.default_build_deduplication_key(
+        assert middleware._build_deduplication_key(
             m1
-        ) == middleware.default_build_deduplication_key(m2)
+        ) == middleware._build_deduplication_key(m2)
 
     def test_different_task_names_different_keys(self, middleware, make_message):
         m1 = make_message(task_name="task_a", kwargs={"x": 1})
         m2 = make_message(task_name="task_b", kwargs={"x": 1})
-        assert middleware.default_build_deduplication_key(
+        assert middleware._build_deduplication_key(
             m1
-        ) != middleware.default_build_deduplication_key(m2)
+        ) != middleware._build_deduplication_key(m2)
 
     def test_explicit_key_label(self, middleware, make_message):
         m = make_message(labels={DEDUP_EXPLICIT_KEY_LABEL: "my-lock"})
-        key = middleware.default_build_deduplication_key(m)
+        key = middleware._build_deduplication_key(m)
         assert key == "taskiq:deduplication:my-lock"
 
     def test_explicit_key_ignores_kwargs(self, middleware, make_message):
         m1 = make_message(kwargs={"a": 1}, labels={DEDUP_EXPLICIT_KEY_LABEL: "fixed"})
         m2 = make_message(kwargs={"a": 99}, labels={DEDUP_EXPLICIT_KEY_LABEL: "fixed"})
-        assert middleware.default_build_deduplication_key(
+        assert middleware._build_deduplication_key(
             m1
-        ) == middleware.default_build_deduplication_key(m2)
+        ) == middleware._build_deduplication_key(m2)
 
     def test_key_fields_filters_kwargs(self, middleware, make_message):
         m1 = make_message(
@@ -77,9 +77,9 @@ class TestDefaultBuildDeduplicationKey:
             kwargs={"a": 1, "b": 2, "c": 999},
             labels={DEDUP_KEY_FIELDS_LABEL: ["a", "b"]},
         )
-        assert middleware.default_build_deduplication_key(
+        assert middleware._build_deduplication_key(
             m1
-        ) == middleware.default_build_deduplication_key(m2)
+        ) == middleware._build_deduplication_key(m2)
 
     def test_key_fields_different_included_fields(self, middleware, make_message):
         m1 = make_message(
@@ -90,9 +90,9 @@ class TestDefaultBuildDeduplicationKey:
             kwargs={"a": 1, "b": 99},
             labels={DEDUP_KEY_FIELDS_LABEL: ["a"]},
         )
-        assert middleware.default_build_deduplication_key(
+        assert middleware._build_deduplication_key(
             m1
-        ) == middleware.default_build_deduplication_key(m2)
+        ) == middleware._build_deduplication_key(m2)
 
     def test_key_prefix_in_output(self, make_message):
         mw = RedisDeduplicationMiddleware(
@@ -100,7 +100,7 @@ class TestDefaultBuildDeduplicationKey:
         )
         mw._redis = None
         m = make_message()
-        key = mw.default_build_deduplication_key(m)
+        key = mw._build_deduplication_key(m)
         assert key.startswith("myapp:locks:")
 
 
@@ -148,7 +148,7 @@ class TestPreSend:
     async def test_ttl_applied(self, middleware, fake_redis, make_message):
         msg = make_message(labels={DEDUP_TTL_LABEL: 42})
         await middleware.pre_send(msg)
-        key = middleware.default_build_deduplication_key(msg)
+        key = middleware._build_deduplication_key(msg)
         ttl = await fake_redis.ttl(key)
         assert 0 < ttl <= 42
 
@@ -186,7 +186,7 @@ class TestPreExecute:
         msg = make_message()
         await middleware.pre_send(msg)
         await middleware.pre_execute(msg)
-        base_key = middleware.default_build_deduplication_key(msg)
+        base_key = middleware._build_deduplication_key(msg)
         exec_key = middleware._exec_key(base_key)
         assert base_key != exec_key
         assert await fake_redis.exists(base_key)
@@ -200,7 +200,7 @@ class TestPostExecute:
     ):
         msg = make_message()
         await middleware.pre_send(msg)
-        key = middleware.default_build_deduplication_key(msg)
+        key = middleware._build_deduplication_key(msg)
         assert await fake_redis.exists(key)
 
         await middleware.post_execute(msg, make_result())
@@ -212,7 +212,7 @@ class TestPostExecute:
     ):
         msg = make_message()
         await middleware.pre_execute(msg)
-        exec_key = middleware._exec_key(middleware.default_build_deduplication_key(msg))
+        exec_key = middleware._exec_key(middleware._build_deduplication_key(msg))
         assert await fake_redis.exists(exec_key)
 
         await middleware.post_execute(msg, make_result())
@@ -224,7 +224,7 @@ class TestPostExecute:
     ):
         msg = make_message()
         await middleware.pre_send(msg)
-        key = middleware.default_build_deduplication_key(msg)
+        key = middleware._build_deduplication_key(msg)
 
         disabled_msg = make_message(labels={DEDUP_LABEL: False})
         await middleware.post_execute(disabled_msg, make_result())
@@ -239,7 +239,7 @@ class TestOnError:
     ):
         msg = make_message()
         await middleware.pre_send(msg)
-        key = middleware.default_build_deduplication_key(msg)
+        key = middleware._build_deduplication_key(msg)
         assert await fake_redis.exists(key)
 
         await middleware.on_error(msg, make_result(is_err=True), RuntimeError("boom"))
@@ -251,7 +251,7 @@ class TestOnError:
     ):
         msg = make_message()
         await middleware.pre_execute(msg)
-        exec_key = middleware._exec_key(middleware.default_build_deduplication_key(msg))
+        exec_key = middleware._exec_key(middleware._build_deduplication_key(msg))
         assert await fake_redis.exists(exec_key)
 
         await middleware.on_error(msg, make_result(is_err=True), RuntimeError("boom"))
@@ -263,7 +263,7 @@ class TestOnError:
     ):
         msg = make_message()
         await middleware.pre_send(msg)
-        key = middleware.default_build_deduplication_key(msg)
+        key = middleware._build_deduplication_key(msg)
 
         disabled_msg = make_message(labels={DEDUP_LABEL: False})
         await middleware.on_error(
@@ -276,7 +276,7 @@ class TestAtomicRelease:
     @pytest.mark.anyio
     async def test_only_owner_can_release(self, middleware, fake_redis, make_message):
         owner_msg = make_message(task_id="owner-task")
-        key = middleware.default_build_deduplication_key(owner_msg)
+        key = middleware._build_deduplication_key(owner_msg)
 
         await fake_redis.set(key, "owner-task", ex=300)
 
