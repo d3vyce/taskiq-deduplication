@@ -22,25 +22,15 @@ class DuplicateTaskError(Exception):
 
 
 class RedisDeduplicationMiddleware(TaskiqMiddleware):
-    """
-    Prevents duplicate tasks from being queued or executed concurrently.
+    """Prevents duplicate tasks from being queued or executed concurrently.
 
-    Two protection layers:
-    - Sender-side (pre_send): sets a queue lock in Redis. A second task with
-      the same fingerprint is rejected while the lock is held.
-    - Worker-side (pre_execute): observational only — logs concurrent duplicate
-      executions but never raises, avoiding retry storms with SmartRetryMiddleware.
-      Tasks must be idempotent to rely on this layer for correctness.
-
-    Per-task label overrides (each maps to a same-named default_* init parameter):
-        deduplication: bool              — set False to opt out entirely
-        deduplication_ttl: int           — lock TTL in seconds
-        deduplication_key: str           — explicit lock key, skips fingerprint computation
-        deduplication_key_fields: list[str] — kwargs to include in the fingerprint
-                                             (ignored if deduplication_key is set)
-
-    Set raise_on_duplicate=False at init to log sender-side duplicates instead
-    of raising — the duplicate task is still sent to the broker in that mode.
+    Attributes:
+        redis_url: Redis connection URL passed to ``Redis.from_url``.
+        default_deduplication: Whether deduplication is enabled by default.
+        default_ttl: Default lock TTL in seconds.
+        key_prefix: Prefix for all Redis lock keys.
+        raise_on_duplicate: If ``True``, ``pre_send`` raises ``DuplicateTaskError``
+            on a duplicate. If ``False``, it logs a warning and sends anyway.
     """
 
     def __init__(
