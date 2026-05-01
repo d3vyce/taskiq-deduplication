@@ -18,15 +18,6 @@ def middleware(fake_redis):
     return mw
 
 
-@pytest.fixture
-def middleware_raise(fake_redis):
-    mw = RedisDeduplicationMiddleware(
-        redis_url="redis://localhost", raise_on_duplicate=True
-    )
-    mw._redis = fake_redis
-    return mw
-
-
 class TestDefaultBuildDeduplicationKey:
     def test_same_kwargs_same_key(self, middleware, make_message):
         m1 = make_message(kwargs={"a": 1, "b": 2})
@@ -112,18 +103,11 @@ class TestPreSend:
         assert result is msg
 
     @pytest.mark.anyio
-    async def test_duplicate_raises_when_opted_in(self, middleware_raise, make_message):
-        msg = make_message()
-        await middleware_raise.pre_send(msg)
-        with pytest.raises(DuplicateTaskError):
-            await middleware_raise.pre_send(make_message())
-
-    @pytest.mark.anyio
-    async def test_duplicate_no_raise_by_default(self, middleware, make_message):
+    async def test_duplicate_raises(self, middleware, make_message):
         msg = make_message()
         await middleware.pre_send(msg)
-        result = await middleware.pre_send(make_message())
-        assert result is not None
+        with pytest.raises(DuplicateTaskError):
+            await middleware.pre_send(make_message())
 
     @pytest.mark.anyio
     async def test_deduplication_disabled_label(self, middleware, make_message):
@@ -133,13 +117,14 @@ class TestPreSend:
         await middleware.pre_send(msg2)  # should not raise
 
     @pytest.mark.anyio
-    async def test_deduplication_disabled_by_default(self, fake_redis, make_message):
+    async def test_deduplication_disabled_by_default_init(
+        self, fake_redis, make_message
+    ):
         mw = RedisDeduplicationMiddleware(
             redis_url="redis://localhost", default_deduplication=False
         )
         mw._redis = fake_redis
-        msg = make_message()
-        await mw.pre_send(msg)
+        await mw.pre_send(make_message())
         await mw.pre_send(make_message())  # should not raise
 
     @pytest.mark.anyio
@@ -153,47 +138,12 @@ class TestPreSend:
     @pytest.mark.anyio
     async def test_different_kwargs_both_pass(self, middleware, make_message):
         await middleware.pre_send(make_message(kwargs={"x": 1}))
-        await middleware.pre_send(make_message(kwargs={"x": 2}))  # different key
-
-
-class TestPreExecute:
-    @pytest.mark.anyio
-    async def test_first_execute_passes(self, middleware, make_message):
-        msg = make_message()
-        result = await middleware.pre_execute(msg)
-        assert result is msg
-
-    @pytest.mark.anyio
-    async def test_duplicate_execute_does_not_raise(self, middleware, make_message):
-        msg = make_message()
-        await middleware.pre_execute(msg)
-        # second execution must never raise, per SmartRetryMiddleware contract
-        result = await middleware.pre_execute(make_message())
-        assert result is not None
-
-    @pytest.mark.anyio
-    async def test_deduplication_disabled_label(self, middleware, make_message):
-        msg = make_message(labels={DEDUP_LABEL: False})
-        await middleware.pre_execute(msg)
-        await middleware.pre_execute(make_message(labels={DEDUP_LABEL: False}))
-
-    @pytest.mark.anyio
-    async def test_exec_key_separate_from_queue_key(
-        self, middleware, fake_redis, make_message
-    ):
-        msg = make_message()
-        await middleware.pre_send(msg)
-        await middleware.pre_execute(msg)
-        base_key = middleware._build_deduplication_key(msg)
-        exec_key = middleware._exec_key(base_key)
-        assert base_key != exec_key
-        assert await fake_redis.exists(base_key)
-        assert await fake_redis.exists(exec_key)
+        await middleware.pre_send(make_message(kwargs={"x": 2}))
 
 
 class TestPostExecute:
     @pytest.mark.anyio
-    async def test_releases_queue_lock(
+    async def test_releases_lock(
         self, middleware, fake_redis, make_message, make_result
     ):
         msg = make_message()
@@ -203,18 +153,6 @@ class TestPostExecute:
 
         await middleware.post_execute(msg, make_result())
         assert not await fake_redis.exists(key)
-
-    @pytest.mark.anyio
-    async def test_releases_exec_lock(
-        self, middleware, fake_redis, make_message, make_result
-    ):
-        msg = make_message()
-        await middleware.pre_execute(msg)
-        exec_key = middleware._exec_key(middleware._build_deduplication_key(msg))
-        assert await fake_redis.exists(exec_key)
-
-        await middleware.post_execute(msg, make_result())
-        assert not await fake_redis.exists(exec_key)
 
     @pytest.mark.anyio
     async def test_deduplication_disabled_noop(
@@ -226,13 +164,12 @@ class TestPostExecute:
 
         disabled_msg = make_message(labels={DEDUP_LABEL: False})
         await middleware.post_execute(disabled_msg, make_result())
-        # lock set by pre_send with deduplication enabled is still there
         assert await fake_redis.exists(key)
 
 
 class TestOnError:
     @pytest.mark.anyio
-    async def test_releases_queue_lock_on_error(
+    async def test_releases_lock_on_error(
         self, middleware, fake_redis, make_message, make_result
     ):
         msg = make_message()
@@ -242,18 +179,6 @@ class TestOnError:
 
         await middleware.on_error(msg, make_result(is_err=True), RuntimeError("boom"))
         assert not await fake_redis.exists(key)
-
-    @pytest.mark.anyio
-    async def test_releases_exec_lock_on_error(
-        self, middleware, fake_redis, make_message, make_result
-    ):
-        msg = make_message()
-        await middleware.pre_execute(msg)
-        exec_key = middleware._exec_key(middleware._build_deduplication_key(msg))
-        assert await fake_redis.exists(exec_key)
-
-        await middleware.on_error(msg, make_result(is_err=True), RuntimeError("boom"))
-        assert not await fake_redis.exists(exec_key)
 
     @pytest.mark.anyio
     async def test_deduplication_disabled_noop(
@@ -278,20 +203,17 @@ class TestAtomicRelease:
 
         await fake_redis.set(key, "owner-task", ex=300)
 
-        # other task should NOT release the lock
-        await middleware._release_if_owned(key, "other-task", "queue lock")
+        await middleware._release_if_owned(key, "other-task")
         assert await fake_redis.exists(key)
 
-        # owner task should release it
-        await middleware._release_if_owned(key, "owner-task", "queue lock")
+        await middleware._release_if_owned(key, "owner-task")
         assert not await fake_redis.exists(key)
 
     @pytest.mark.anyio
     async def test_release_missing_key_is_noop(self, middleware, fake_redis):
         await middleware._release_if_owned(
-            "taskiq:deduplication:nonexistent", "some-task", "queue lock"
+            "taskiq:deduplication:nonexistent", "some-task"
         )
-        # no error raised
 
 
 class TestLifecycle:
@@ -317,4 +239,4 @@ class TestLifecycle:
     @pytest.mark.anyio
     async def test_shutdown_without_startup_is_safe(self):
         mw = RedisDeduplicationMiddleware(redis_url="redis://localhost")
-        await mw.shutdown()  # _redis is None, should not raise
+        await mw.shutdown()

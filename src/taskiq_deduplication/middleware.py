@@ -22,16 +22,18 @@ class DuplicateTaskError(Exception):
 
 
 class RedisDeduplicationMiddleware(TaskiqMiddleware):
-    """Prevents duplicate tasks from being queued or executed concurrently.
+    """Prevents duplicate tasks from being queued.
+
+    When a task is dispatched, a Redis lock is acquired for the duration of its
+    execution. Any subsequent task with the same fingerprint is rejected with
+    ``DuplicateTaskError`` while the lock is held. The lock is released automatically
+    on completion or error.
 
     Attributes:
         redis_url: Redis connection URL passed to ``Redis.from_url``.
         default_deduplication: Whether deduplication is enabled by default.
         default_ttl: Default lock TTL in seconds.
         key_prefix: Prefix for all Redis lock keys.
-        raise_on_duplicate: If ``True``, ``pre_send`` raises ``DuplicateTaskError``
-            on a duplicate. Defaults to ``False`` — duplicates are logged and
-            sent anyway unless you opt in to raising.
     """
 
     def __init__(
@@ -40,13 +42,11 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         default_deduplication: bool = True,
         default_ttl: int = 300,
         key_prefix: str = "taskiq:deduplication",
-        raise_on_duplicate: bool = False,
     ) -> None:
         self.redis_url = redis_url
         self.default_deduplication = default_deduplication
         self.default_ttl = default_ttl
         self.key_prefix = key_prefix
-        self.raise_on_duplicate = raise_on_duplicate
         self._redis: Redis | None = None
 
     async def startup(self) -> None:
@@ -74,24 +74,19 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         fingerprint = hashlib.sha256(payload.encode()).hexdigest()[:16]
         return f"{self.key_prefix}:{fingerprint}"
 
-    def _exec_key(self, base_key: str) -> str:
-        return f"{base_key}:exec"
-
     def _is_enabled(self, labels: dict[str, Any]) -> bool:
         return bool(labels.get(DEDUP_LABEL, self.default_deduplication))
 
     def _get_ttl(self, labels: dict[str, Any]) -> int:
         return int(labels.get(DEDUP_TTL_LABEL, self.default_ttl))
 
-    async def _release_if_owned(self, key: str, task_id: str, description: str) -> None:
+    async def _release_if_owned(self, key: str, task_id: str) -> None:
         assert self._redis is not None
         released = await check_and_delete(self._redis, key, task_id)
         if released:
-            logger.debug("Released %s %s", description, key)
+            logger.debug("Released lock %s", key)
         else:
-            logger.debug(
-                "Skipped release of %s %s: not owned by this task", description, key
-            )
+            logger.debug("Skipped release of lock %s: not owned by this task", key)
 
     async def pre_send(self, message: TaskiqMessage) -> TaskiqMessage:
         if not self._is_enabled(message.labels):
@@ -101,47 +96,19 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         key = self._build_deduplication_key(message)
         ttl = self._get_ttl(message.labels)
 
-        logger.debug("Acquiring queue lock %s for task %s", key, message.task_name)
+        logger.debug("Acquiring lock %s for task %s", key, message.task_name)
         acquired = await self._redis.set(key, message.task_id, ex=ttl, nx=True)
         if not acquired:
-            logger.info(
-                "Duplicate task %s deduplicated at send time (key=%s).",
+            logger.warning(
+                "Duplicate task %s dropped (key=%s).",
                 message.task_name,
                 key,
             )
-            if self.raise_on_duplicate:
-                raise DuplicateTaskError(
-                    f"Task {message.task_name!r} with the same arguments is already queued or running."
-                )
-            logger.warning("Sending duplicate task %s anyway.", message.task_name)
-        else:
-            logger.debug("Queue lock %s acquired for task %s", key, message.task_name)
-
-        return message
-
-    async def pre_execute(self, message: TaskiqMessage) -> TaskiqMessage:
-        if not self._is_enabled(message.labels):
-            return message
-
-        assert self._redis is not None
-        key = self._exec_key(self._build_deduplication_key(message))
-        ttl = self._get_ttl(message.labels)
-
-        logger.debug("Acquiring execution lock %s for task %s", key, message.task_name)
-        acquired = await self._redis.set(key, message.task_id, ex=ttl, nx=True)
-        if acquired:
-            logger.debug(
-                "Execution lock %s acquired for task %s", key, message.task_name
-            )
-        else:
-            # Never raise here: raising in pre_execute with retry_on_error=True causes
-            # SmartRetryMiddleware to retry repeatedly against the same live lock.
-            logger.info(
-                "Concurrent duplicate execution of task %s detected (key=%s), proceeding anyway.",
-                message.task_name,
-                key,
+            raise DuplicateTaskError(
+                f"Task {message.task_name!r} with the same arguments is already queued or running."
             )
 
+        logger.debug("Lock %s acquired for task %s", key, message.task_name)
         return message
 
     async def post_execute(
@@ -151,10 +118,8 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
     ) -> None:
         if not self._is_enabled(message.labels):
             return
-        base_key = self._build_deduplication_key(message)
-        await self._release_if_owned(base_key, message.task_id, "queue lock")
         await self._release_if_owned(
-            self._exec_key(base_key), message.task_id, "execution lock"
+            self._build_deduplication_key(message), message.task_id
         )
 
     async def on_error(
@@ -165,8 +130,6 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
     ) -> None:
         if not self._is_enabled(message.labels):
             return
-        base_key = self._build_deduplication_key(message)
-        await self._release_if_owned(base_key, message.task_id, "queue lock")
         await self._release_if_owned(
-            self._exec_key(base_key), message.task_id, "execution lock"
+            self._build_deduplication_key(message), message.task_id
         )
