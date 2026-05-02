@@ -7,6 +7,7 @@ copyright = "Copyright &copy; 2026 d3vyce"
 repo_url = "https://github.com/d3vyce/taskiq-deduplication"
 
 [project.theme]
+custom_dir = "docs/overrides"
 language = "en"
 features = [
     "announce.dismiss",

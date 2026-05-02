@@ -1,13 +1,14 @@
 # API Reference
 
-## Middleware
+You can import them directly from `taskiq_deduplication`:
 
-::: taskiq_deduplication.RedisDeduplicationMiddleware
-    options:
-      show_source: false
+```python
+from taskiq_deduplication import (
+    DuplicateTaskError,
+    RedisDeduplicationMiddleware,
+)
+```
 
-## Exceptions
+## ::: taskiq_deduplication.RedisDeduplicationMiddleware
 
-::: taskiq_deduplication.DuplicateTaskError
-    options:
-      show_source: false
+## ::: taskiq_deduplication.DuplicateTaskError
