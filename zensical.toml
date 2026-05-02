@@ -1,0 +1,112 @@
+[project]
+site_name = "Taskiq Deduplication"
+site_description = "Redis-backed deduplication middleware for Taskiq."
+site_author = "d3vyce"
+site_url = "https://taskiq-deduplication.d3vyce.fr/"
+copyright = "Copyright &copy; 2026 d3vyce"
+repo_url = "https://github.com/d3vyce/taskiq-deduplication"
+
+[project.theme]
+language = "en"
+features = [
+    "announce.dismiss",
+    "content.action.view",
+    "content.code.annotate",
+    "content.code.copy",
+    "content.code.select",
+    "content.footnote.tooltips",
+    "content.tabs.link",
+    "content.tooltips",
+    "navigation.footer",
+    "navigation.indexes",
+    "navigation.instant",
+    "navigation.instant.prefetch",
+    "navigation.path",
+    "navigation.sections",
+    "navigation.tabs",
+    "navigation.top",
+    "navigation.tracking",
+    "search.highlight",
+]
+
+[[project.theme.palette]]
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.theme.font]
+text = "Inter"
+code = "Jetbrains Mono"
+
+[project.theme.icon]
+repo = "fontawesome/brands/github"
+
+[project.plugins.mkdocstrings.handlers.python]
+inventories = ["https://docs.python.org/3/objects.inv"]
+paths = ["src"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "google"
+inherited_members = true
+show_source = false
+show_root_heading = true
+
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+"pymdownx.arithmatex" = {generic = true}
+"pymdownx.betterem" = {}
+"pymdownx.caret" = {}
+"pymdownx.details" = {}
+"pymdownx.emoji" = {}
+"pymdownx.inlinehilite" = {}
+"pymdownx.keys" = {}
+"pymdownx.magiclink" = {}
+"pymdownx.mark" = {}
+"pymdownx.smartsymbols" = {}
+"pymdownx.tasklist" = {custom_checkbox = true}
+"pymdownx.tilde" = {}
+
+[project.markdown_extensions.pymdownx.emoji]
+emoji_index = "zensical.extensions.emoji.twemoji"
+emoji_generator = "zensical.extensions.emoji.to_svg"
+
+[project.markdown_extensions."pymdownx.highlight"]
+anchor_linenums = true
+line_spans = "__span"
+pygments_lang_class = true
+
+[project.markdown_extensions."pymdownx.superfences"]
+custom_fences = [{name = "mermaid", class = "mermaid"}]
+
+[project.markdown_extensions."pymdownx.tabbed"]
+alternate_style = true
+combine_header_slug = true
+
+[project.markdown_extensions."toc"]
+permalink = true
+
+[project.markdown_extensions."pymdownx.snippets"]
+base_path = ["."]
+check_paths = true
+
+[[project.nav]]
+Home = "index.md"
+
+[[project.nav]]
+Usage = "usage.md"
+
+[[project.nav]]
+"API Reference" = "reference.md"
+
+[[project.nav]]
+"Changelog ↗" = "https://github.com/d3vyce/taskiq-deduplication/releases"

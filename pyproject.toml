@@ -1,0 +1,80 @@
+[project]
+name = "taskiq-deduplication"
+version = "0.1.0"
+description = "Production-ready utilities for FastAPI applications"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [
+    { name = "d3vyce", email = "contact@d3vyce.fr" }
+]
+keywords = ["fastapi", "sqlalchemy", "postgresql"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development",
+    "Typing :: Typed",
+]
+dependencies = [
+    "redis>=7.0.0",
+    "taskiq>=0.12.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/d3vyce/taskiq-deduplication"
+Documentation = "https://taskiq-deduplication.d3vyce.fr/"
+Repository = "https://github.com/d3vyce/taskiq-deduplication"
+Issues = "https://github.com/d3vyce/taskiq-deduplication/issues"
+
+[dependency-groups]
+dev = [
+    {include-group = "tests"},
+    {include-group = "docs"},
+    "taskiq_deduplication",
+    "prek>=0.3.8",
+    "ruff>=0.1.0",
+    "ty>=0.0.1a0",
+]
+tests = [
+    "coverage>=7.0.0",
+    "fakeredis[lua]>=2.0.0",
+    "pytest-anyio>=0.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest>=8.0.0",
+]
+docs = [
+    "mkdocstrings-python>=2.0.2",
+    "zensical>=0.0.30",
+]
+
+[build-system]
+requires = ["uv_build>=0.10,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["src/taskiq_deduplication"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
