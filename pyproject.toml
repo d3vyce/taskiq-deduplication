@@ -44,7 +44,7 @@ dev = [
     "taskiq_deduplication",
     "prek>=0.3.8",
     "ruff>=0.1.0",
-    "ty>=0.0.1a0",
+    "ty>=0.0.34",
 ]
 tests = [
     "coverage>=7.0.0",
