@@ -21,7 +21,7 @@ Redis-backed deduplication middleware for Taskiq that prevents duplicate tasks f
 ## Installation
 
 ```bash
-uv add taskiq-deduplication
+uv add "taskiq-deduplication"
 ```
 
 ## Quick Start

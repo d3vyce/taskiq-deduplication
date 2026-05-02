@@ -40,6 +40,7 @@ Issues = "https://github.com/d3vyce/taskiq-deduplication/issues"
 [dependency-groups]
 dev = [
     {include-group = "tests"},
+    {include-group = "docs"},
     "taskiq_deduplication",
     "prek>=0.3.8",
     "ruff>=0.1.0",
@@ -51,6 +52,10 @@ tests = [
     "pytest-anyio>=0.0.0",
     "pytest-cov>=4.0.0",
     "pytest>=8.0.0",
+]
+docs = [
+    "mkdocstrings-python>=2.0.2",
+    "zensical>=0.0.30",
 ]
 
 [build-system]
