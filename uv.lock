@@ -1510,7 +1510,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "coverage", specifier = ">=7.0.0" },
-    { name = "fakeredis", extras = ["lua"], specifier = ">=2.0.0" },
+    { name = "fakeredis", extras = ["lua"], specifier = ">=2.35.1" },
     { name = "mkdocstrings-python", specifier = ">=2.0.2" },
     { name = "prek", specifier = ">=0.3.8" },
     { name = "pytest", specifier = ">=8.0.0" },
@@ -1527,7 +1527,7 @@ docs = [
 ]
 tests = [
     { name = "coverage", specifier = ">=7.0.0" },
-    { name = "fakeredis", extras = ["lua"], specifier = ">=2.0.0" },
+    { name = "fakeredis", extras = ["lua"], specifier = ">=2.35.1" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-anyio", specifier = ">=0.0.0" },
     { name = "pytest-cov", specifier = ">=4.0.0" },
