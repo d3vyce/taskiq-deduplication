@@ -2,7 +2,7 @@
 
 from .middleware import DuplicateTaskError, RedisDeduplicationMiddleware
 
-__version__ = "3.1.1"
+__version__ = "1.0.0"
 
 __all__ = [
     "DuplicateTaskError",
