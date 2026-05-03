@@ -94,6 +94,40 @@ class TestDefaultBuildDeduplicationKey:
         key = mw._build_deduplication_key(m)
         assert key.startswith("myapp:locks:")
 
+    def test_empty_kwargs_produces_consistent_key(self, middleware, make_message):
+        m1 = make_message(kwargs={})
+        m2 = make_message(kwargs={})
+        assert middleware._build_deduplication_key(
+            m1
+        ) == middleware._build_deduplication_key(m2)
+
+    def test_key_fields_empty_list_ignores_all_kwargs(self, middleware, make_message):
+        m1 = make_message(kwargs={"a": 1}, labels={DEDUP_KEY_FIELDS_LABEL: []})
+        m2 = make_message(kwargs={"a": 999}, labels={DEDUP_KEY_FIELDS_LABEL: []})
+        assert middleware._build_deduplication_key(
+            m1
+        ) == middleware._build_deduplication_key(m2)
+
+    def test_key_fields_absent_from_kwargs_are_ignored(self, middleware, make_message):
+        m1 = make_message(
+            kwargs={"order_id": 1}, labels={DEDUP_KEY_FIELDS_LABEL: ["user_id"]}
+        )
+        m2 = make_message(
+            kwargs={"order_id": 999}, labels={DEDUP_KEY_FIELDS_LABEL: ["user_id"]}
+        )
+        assert middleware._build_deduplication_key(
+            m1
+        ) == middleware._build_deduplication_key(m2)
+
+    def test_explicit_key_takes_precedence_over_key_fields(
+        self, middleware, make_message
+    ):
+        m = make_message(
+            kwargs={"a": 1},
+            labels={DEDUP_EXPLICIT_KEY_LABEL: "my-lock", DEDUP_KEY_FIELDS_LABEL: ["a"]},
+        )
+        assert middleware._build_deduplication_key(m) == "taskiq:deduplication:my-lock"
+
 
 class TestPreSend:
     @pytest.mark.anyio
@@ -140,6 +174,16 @@ class TestPreSend:
         await middleware.pre_send(make_message(kwargs={"x": 1}))
         await middleware.pre_send(make_message(kwargs={"x": 2}))
 
+    @pytest.mark.anyio
+    async def test_default_ttl_applied(self, fake_redis, make_message):
+        mw = RedisDeduplicationMiddleware(redis_url="redis://localhost", default_ttl=77)
+        mw._redis = fake_redis
+        msg = make_message()
+        await mw.pre_send(msg)
+        key = mw._build_deduplication_key(msg)
+        ttl = await fake_redis.ttl(key)
+        assert 0 < ttl <= 77
+
 
 class TestPostExecute:
     @pytest.mark.anyio
@@ -165,6 +209,15 @@ class TestPostExecute:
         disabled_msg = make_message(labels={DEDUP_LABEL: False})
         await middleware.post_execute(disabled_msg, make_result())
         assert await fake_redis.exists(key)
+
+    @pytest.mark.anyio
+    async def test_post_execute_after_ttl_expiry_is_safe(
+        self, middleware, fake_redis, make_message, make_result
+    ):
+        msg = make_message()
+        await middleware.pre_send(msg)
+        await fake_redis.delete(middleware._build_deduplication_key(msg))
+        await middleware.post_execute(msg, make_result())
 
 
 class TestOnError:
@@ -193,6 +246,26 @@ class TestOnError:
             disabled_msg, make_result(is_err=True), RuntimeError("x")
         )
         assert await fake_redis.exists(key)
+
+
+class TestRedispatchAfterRelease:
+    @pytest.mark.anyio
+    async def test_redispatch_after_post_execute(
+        self, middleware, make_message, make_result
+    ):
+        msg = make_message()
+        await middleware.pre_send(msg)
+        await middleware.post_execute(msg, make_result())
+        await middleware.pre_send(make_message())
+
+    @pytest.mark.anyio
+    async def test_redispatch_after_on_error(
+        self, middleware, make_message, make_result
+    ):
+        msg = make_message()
+        await middleware.pre_send(msg)
+        await middleware.on_error(msg, make_result(is_err=True), RuntimeError("boom"))
+        await middleware.pre_send(make_message())
 
 
 class TestAtomicRelease:
