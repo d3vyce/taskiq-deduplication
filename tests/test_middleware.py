@@ -92,7 +92,7 @@ class TestDefaultBuildDeduplicationKey:
         mw._redis = None
         m = make_message()
         key = mw._build_deduplication_key(m)
-        assert key.startswith("myapp:locks:")
+        assert key is not None and key.startswith("myapp:locks:")
 
     def test_empty_kwargs_produces_consistent_key(self, middleware, make_message):
         m1 = make_message(kwargs={})
@@ -127,6 +127,10 @@ class TestDefaultBuildDeduplicationKey:
             labels={DEDUP_EXPLICIT_KEY_LABEL: "my-lock", DEDUP_KEY_FIELDS_LABEL: ["a"]},
         )
         assert middleware._build_deduplication_key(m) == "taskiq:deduplication:my-lock"
+
+    def test_non_serializable_kwargs_returns_none(self, middleware, make_message):
+        m = make_message(kwargs={"dt": object()})
+        assert middleware._build_deduplication_key(m) is None
 
 
 class TestPreSend:
@@ -173,6 +177,15 @@ class TestPreSend:
     async def test_different_kwargs_both_pass(self, middleware, make_message):
         await middleware.pre_send(make_message(kwargs={"x": 1}))
         await middleware.pre_send(make_message(kwargs={"x": 2}))
+
+    @pytest.mark.anyio
+    async def test_non_serializable_kwargs_skips_deduplication(
+        self, middleware, make_message
+    ):
+        msg1 = make_message(kwargs={"dt": object()})
+        msg2 = make_message(kwargs={"dt": object()})
+        await middleware.pre_send(msg1)
+        await middleware.pre_send(msg2)  # should not raise
 
     @pytest.mark.anyio
     async def test_default_ttl_applied(self, fake_redis, make_message):
