@@ -84,7 +84,10 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         return int(labels.get(DEDUP_TTL_LABEL, self.default_ttl))
 
     async def _release_if_owned(self, key: str, task_id: str) -> None:
-        assert self._redis is not None
+        if self._redis is None:
+            raise RuntimeError(
+                "RedisDeduplicationMiddleware.startup() was never called."
+            )
         released = await check_and_delete(self._redis, key, task_id)
         if released:
             logger.debug("Released lock %s", key)
@@ -95,7 +98,10 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         if not self._is_enabled(message.labels):
             return message
 
-        assert self._redis is not None
+        if self._redis is None:
+            raise RuntimeError(
+                "RedisDeduplicationMiddleware.startup() was never called."
+            )
         key = self._build_deduplication_key(message)
         if key is None:
             logger.warning(

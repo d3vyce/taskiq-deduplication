@@ -326,3 +326,9 @@ class TestLifecycle:
     async def test_shutdown_without_startup_is_safe(self):
         mw = RedisDeduplicationMiddleware(redis_url="redis://localhost")
         await mw.shutdown()
+
+    @pytest.mark.anyio
+    async def test_pre_send_without_startup_raises_runtime_error(self, make_message):
+        mw = RedisDeduplicationMiddleware(redis_url="redis://localhost")
+        with pytest.raises(RuntimeError, match="startup"):
+            await mw.pre_send(make_message())
