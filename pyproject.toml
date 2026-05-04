@@ -1,7 +1,7 @@
 [project]
 name = "taskiq-deduplication"
 version = "1.0.1"
-description = "Production-ready utilities for FastAPI applications"
+description = "Redis-backed deduplication middleware for Taskiq"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -9,7 +9,7 @@ requires-python = ">=3.10"
 authors = [
     { name = "d3vyce", email = "contact@d3vyce.fr" }
 ]
-keywords = ["fastapi", "sqlalchemy", "postgresql"]
+keywords = ["taskiq", "redis", "deduplication", "middleware", "task-queue"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Framework :: AsyncIO",
