@@ -56,7 +56,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         if self._redis is not None:
             await self._redis.aclose()
 
-    def _build_deduplication_key(self, message: TaskiqMessage) -> str:
+    def _build_deduplication_key(self, message: TaskiqMessage) -> str | None:
         explicit_key: str | None = message.labels.get(DEDUP_EXPLICIT_KEY_LABEL)
         if explicit_key is not None:
             return f"{self.key_prefix}:{explicit_key}"
@@ -67,10 +67,13 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
             if key_fields is not None
             else message.kwargs
         )
-        payload = json.dumps(
-            {"task": message.task_name, "kwargs": kwargs},
-            sort_keys=True,
-        )
+        try:
+            payload = json.dumps(
+                {"task": message.task_name, "kwargs": kwargs},
+                sort_keys=True,
+            )
+        except TypeError:
+            return None
         fingerprint = hashlib.sha256(payload.encode()).hexdigest()[:16]
         return f"{self.key_prefix}:{fingerprint}"
 
@@ -94,6 +97,13 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
 
         assert self._redis is not None
         key = self._build_deduplication_key(message)
+        if key is None:
+            logger.warning(
+                "Task %s has non-JSON-serializable kwargs; deduplication skipped."
+                " Use the deduplication_key label to deduplicate this task.",
+                message.task_name,
+            )
+            return message
         ttl = self._get_ttl(message.labels)
 
         logger.debug("Acquiring lock %s for task %s", key, message.task_name)
@@ -118,9 +128,10 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
     ) -> None:
         if not self._is_enabled(message.labels):
             return
-        await self._release_if_owned(
-            self._build_deduplication_key(message), message.task_id
-        )
+        key = self._build_deduplication_key(message)
+        if key is None:
+            return
+        await self._release_if_owned(key, message.task_id)
 
     async def on_error(
         self,
@@ -130,6 +141,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
     ) -> None:
         if not self._is_enabled(message.labels):
             return
-        await self._release_if_owned(
-            self._build_deduplication_key(message), message.task_id
-        )
+        key = self._build_deduplication_key(message)
+        if key is None:
+            return
+        await self._release_if_owned(key, message.task_id)
