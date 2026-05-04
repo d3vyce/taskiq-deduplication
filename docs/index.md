@@ -50,8 +50,8 @@ except DuplicateTaskError:
 
 ## Features
 
-- **Sender-side deduplication** — rejects duplicate tasks at dispatch time via a Redis queue lock, before they reach the broker.
-- **Worker-side detection** — logs concurrent duplicate executions without raising, keeping `SmartRetryMiddleware` safe from retry storms.
+- **Sender-side deduplication** — rejects duplicate tasks at dispatch time via a Redis lock, before they reach the broker.
+- **Atomic lock release** — lock is released on completion or error via a Lua check-and-delete; only the owning task can release its lock.
 - **Configurable TTL** — set a global default or override per task with the `deduplication_ttl` label.
 - **Explicit lock key** — pin any task to a fixed Redis key with `deduplication_key`, bypassing fingerprint computation entirely.
 - **Partial fingerprint** — deduplicate on a subset of kwargs with `deduplication_key_fields`, ignoring irrelevant arguments.

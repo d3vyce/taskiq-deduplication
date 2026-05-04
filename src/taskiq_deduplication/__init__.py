@@ -1,4 +1,4 @@
-"""FastAPI utilities package."""
+"""Redis-backed deduplication middleware for Taskiq."""
 
 from .middleware import DuplicateTaskError, RedisDeduplicationMiddleware
 
