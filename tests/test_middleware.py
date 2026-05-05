@@ -332,3 +332,75 @@ class TestLifecycle:
         mw = RedisDeduplicationMiddleware(redis_url="redis://localhost")
         with pytest.raises(RuntimeError, match="startup"):
             await mw.pre_send(make_message())
+
+
+class TestStartupRetry:
+    @pytest.mark.anyio
+    async def test_startup_succeeds_after_retries(self):
+        mw = RedisDeduplicationMiddleware(
+            redis_url="redis://localhost",
+            startup_retries=3,
+            startup_retry_delay=0.01,
+        )
+        with patch("redis.asyncio.Redis.from_url") as mock_from_url:
+            mock_client = AsyncMock()
+            mock_client.ping.side_effect = [
+                ConnectionError("fail"),
+                ConnectionError("fail"),
+                None,
+            ]
+            mock_from_url.return_value = mock_client
+            await mw.startup()
+            assert mw._redis is mock_client
+            assert mock_client.ping.call_count == 3
+
+    @pytest.mark.anyio
+    async def test_startup_raises_after_all_retries_exhausted(self):
+        mw = RedisDeduplicationMiddleware(
+            redis_url="redis://localhost",
+            startup_retries=2,
+            startup_retry_delay=0.01,
+        )
+        with patch("redis.asyncio.Redis.from_url") as mock_from_url:
+            mock_client = AsyncMock()
+            mock_client.ping.side_effect = ConnectionError("refused")
+            mock_from_url.return_value = mock_client
+            with pytest.raises(ConnectionError, match="2 attempts"):
+                await mw.startup()
+            assert mock_client.ping.call_count == 2
+
+    @pytest.mark.anyio
+    async def test_startup_no_retry_on_first_success(self):
+        mw = RedisDeduplicationMiddleware(
+            redis_url="redis://localhost",
+            startup_retries=3,
+            startup_retry_delay=0.01,
+        )
+        with patch("redis.asyncio.Redis.from_url") as mock_from_url:
+            mock_client = AsyncMock()
+            mock_from_url.return_value = mock_client
+            await mw.startup()
+            mock_client.ping.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_startup_retry_delay_exponential(self):
+        mw = RedisDeduplicationMiddleware(
+            redis_url="redis://localhost",
+            startup_retries=3,
+            startup_retry_delay=0.01,
+        )
+        with (
+            patch("redis.asyncio.Redis.from_url") as mock_from_url,
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            mock_client = AsyncMock()
+            mock_client.ping.side_effect = [
+                ConnectionError("fail"),
+                ConnectionError("fail"),
+                None,
+            ]
+            mock_from_url.return_value = mock_client
+            await mw.startup()
+            assert mock_sleep.call_count == 2
+            assert mock_sleep.call_args_list[0].args[0] == 0.01
+            assert mock_sleep.call_args_list[1].args[0] == 0.02

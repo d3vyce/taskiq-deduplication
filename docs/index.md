@@ -56,6 +56,7 @@ except DuplicateTaskError:
 - **Explicit lock key** — pin any task to a fixed Redis key with `deduplication_key`, bypassing fingerprint computation entirely.
 - **Partial fingerprint** — deduplicate on a subset of kwargs with `deduplication_key_fields`, ignoring irrelevant arguments.
 - **Per-task opt-out** — disable deduplication for individual tasks with the `deduplication` label.
+- **Startup resilience** — automatic reconnection with exponential backoff if Redis is unavailable at broker startup.
 
 ## License
 
