@@ -1,7 +1,8 @@
+import asyncio
 import hashlib
 import json
 import logging
-from typing import Any
+from typing import Any, Awaitable, cast
 
 from redis.asyncio import Redis
 from taskiq import TaskiqMessage, TaskiqResult
@@ -42,15 +43,43 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         default_deduplication: bool = True,
         default_ttl: int = 300,
         key_prefix: str = "taskiq:deduplication",
+        startup_retries: int = 3,
+        startup_retry_delay: float = 1.0,
     ) -> None:
         self.redis_url = redis_url
         self.default_deduplication = default_deduplication
         self.default_ttl = default_ttl
         self.key_prefix = key_prefix
+        self.startup_retries = startup_retries
+        self.startup_retry_delay = startup_retry_delay
         self._redis: Redis | None = None
 
     async def startup(self) -> None:
-        self._redis = Redis.from_url(self.redis_url)
+        last_error: BaseException | None = None
+        for attempt in range(self.startup_retries):
+            try:
+                self._redis = Redis.from_url(self.redis_url)
+                await cast(Awaitable[bool], self._redis.ping())
+                return
+            except Exception as exc:
+                last_error = exc
+                if attempt < self.startup_retries - 1:
+                    delay = self.startup_retry_delay * (2**attempt)
+                    logger.warning(
+                        "Failed to connect to Redis (attempt %d/%d): %s. "
+                        "Retrying in %.1fs...",
+                        attempt + 1,
+                        self.startup_retries,
+                        exc,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+        logger.error(
+            "Failed to connect to Redis after %d attempts.", self.startup_retries
+        )
+        raise ConnectionError(
+            f"Could not connect to Redis after {self.startup_retries} attempts"
+        ) from last_error
 
     async def shutdown(self) -> None:
         if self._redis is not None:

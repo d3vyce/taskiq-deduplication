@@ -21,6 +21,8 @@ broker = ListQueueBroker("redis://localhost:6379").with_middlewares(
 | `default_deduplication` | `bool` | `True` | Whether deduplication is enabled for all tasks by default. Set `False` to opt-in per task instead of opting out. |
 | `default_ttl` | `int` | `300` | Default lock TTL in seconds. Overridden per task with the `deduplication_ttl` label. |
 | `key_prefix` | `str` | `"taskiq:deduplication"` | Prefix for all Redis lock keys. |
+| `startup_retries` | `int` | `3` | Number of connection attempts during broker startup. |
+| `startup_retry_delay` | `float` | `1.0` | Base delay in seconds between retries (exponential backoff: delay × 2^n). |
 
 ```python
 broker = ListQueueBroker("redis://localhost:6379").with_middlewares(
@@ -29,7 +31,26 @@ broker = ListQueueBroker("redis://localhost:6379").with_middlewares(
         default_deduplication=True,
         default_ttl=60,
         key_prefix="myapp:dedup",
+        startup_retries=5,
+        startup_retry_delay=0.5,
     ),
+)
+```
+
+## Startup resilience
+
+On startup the middleware verifies the Redis connection with a `PING`. If Redis is
+temporarily unavailable, it retries with exponential backoff.
+After all attempts are exhausted a `ConnectionError` is raised and the broker
+fails to start.
+
+Adjust `startup_retries` and `startup_retry_delay` to suit your deployment:
+
+```python
+RedisDeduplicationMiddleware(
+    redis_url="redis://localhost:6379",
+    startup_retries=5,
+    startup_retry_delay=2.0,
 )
 ```
 
