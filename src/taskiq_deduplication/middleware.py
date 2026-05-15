@@ -8,7 +8,7 @@ from redis.asyncio import Redis
 from taskiq import TaskiqMessage, TaskiqResult
 from taskiq.abc.middleware import TaskiqMiddleware
 
-from .utils import check_and_delete
+from .utils import RELEASE_LUA_SCRIPT, check_and_delete
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         self.startup_retries = startup_retries
         self.startup_retry_delay = startup_retry_delay
         self._redis: Redis | None = None
+        self._release_script: Any = None
 
     async def startup(self) -> None:
         last_error: BaseException | None = None
@@ -62,6 +63,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
             try:
                 self._redis = Redis.from_url(self.redis_url)
                 await cast(Awaitable[bool], self._redis.ping())
+                self._release_script = self._redis.register_script(RELEASE_LUA_SCRIPT)
                 return
             except Exception as exc:
                 last_error = exc
@@ -133,7 +135,9 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
             raise RuntimeError(
                 "RedisDeduplicationMiddleware.startup() was never called."
             )
-        released = await check_and_delete(self._redis, key, task_id)
+        if self._release_script is None:
+            self._release_script = self._redis.register_script(RELEASE_LUA_SCRIPT)
+        released = await check_and_delete(self._release_script, key, task_id)
         if released:
             logger.debug("Released lock %s", key)
         else:
@@ -181,11 +185,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         logger.debug("Lock %s acquired for task %s", key, message.task_name)
         return message
 
-    async def post_execute(
-        self,
-        message: TaskiqMessage,
-        result: TaskiqResult,
-    ) -> None:
+    async def _release_lock(self, message: TaskiqMessage) -> None:
         if not self._is_enabled(message.labels):
             return
         key = self._get_cached_key(message)
@@ -193,15 +193,17 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
             return
         await self._release_if_owned(key, message.task_id)
 
+    async def post_execute(
+        self,
+        message: TaskiqMessage,
+        result: TaskiqResult,
+    ) -> None:
+        await self._release_lock(message)
+
     async def on_error(
         self,
         message: TaskiqMessage,
         result: TaskiqResult,
         exception: BaseException,
     ) -> None:
-        if not self._is_enabled(message.labels):
-            return
-        key = self._get_cached_key(message)
-        if key is None:
-            return
-        await self._release_if_owned(key, message.task_id)
+        await self._release_lock(message)
