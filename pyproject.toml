@@ -1,6 +1,6 @@
 [project]
 name = "taskiq-deduplication"
-version = "1.0.2"
+version = "1.0.3"
 description = "Redis-backed deduplication middleware for Taskiq"
 readme = "README.md"
 license = "MIT"
