@@ -404,3 +404,108 @@ class TestStartupRetry:
             assert mock_sleep.call_count == 2
             assert mock_sleep.call_args_list[0].args[0] == 0.01
             assert mock_sleep.call_args_list[1].args[0] == 0.02
+
+
+class TestLabelTypeParsing:
+    @pytest.mark.anyio
+    async def test_bool_label_false_disables_dedup(self, fake_redis, make_message):
+        mw = RedisDeduplicationMiddleware(redis_url="redis://localhost")
+        mw._redis = fake_redis
+        await mw.pre_send(make_message(labels={DEDUP_LABEL: False}))
+        await mw.pre_send(make_message(labels={DEDUP_LABEL: False}))
+
+    @pytest.mark.anyio
+    async def test_bool_label_true_enables_dedup(self, middleware, make_message):
+        msg = make_message(labels={DEDUP_LABEL: True})
+        await middleware.pre_send(msg)
+        with pytest.raises(DuplicateTaskError):
+            await middleware.pre_send(make_message(labels={DEDUP_LABEL: True}))
+
+    @pytest.mark.anyio
+    async def test_key_fields_list_parsed_correctly(self, middleware, make_message):
+        m1 = make_message(
+            kwargs={"a": 1, "b": 2, "c": 3},
+            labels={DEDUP_KEY_FIELDS_LABEL: ["a", "b"]},
+        )
+        m2 = make_message(
+            kwargs={"a": 1, "b": 2, "c": 999},
+            labels={DEDUP_KEY_FIELDS_LABEL: ["a", "b"]},
+        )
+        assert middleware._build_deduplication_key(
+            m1
+        ) == middleware._build_deduplication_key(m2)
+
+    @pytest.mark.anyio
+    async def test_key_fields_non_list_ignored(self, middleware, make_message):
+        m = make_message(
+            kwargs={"a": 1},
+            labels={DEDUP_KEY_FIELDS_LABEL: "not-a-list"},
+        )
+        key = middleware._build_deduplication_key(m)
+        assert key is not None
+
+
+class TestKeyCaching:
+    @pytest.mark.anyio
+    async def test_key_cached_during_pre_send(self, middleware, make_message):
+        from taskiq_deduplication.middleware import _CACHED_KEY_LABEL
+
+        msg = make_message()
+        await middleware.pre_send(msg)
+        assert _CACHED_KEY_LABEL in msg.labels
+
+    @pytest.mark.anyio
+    async def test_post_execute_uses_cached_key(
+        self, middleware, fake_redis, make_message, make_result
+    ):
+        from taskiq_deduplication.middleware import _CACHED_KEY_LABEL
+
+        msg = make_message()
+        await middleware.pre_send(msg)
+        cached_key = msg.labels.get(_CACHED_KEY_LABEL)
+        await middleware.post_execute(msg, make_result())
+        assert not await fake_redis.exists(cached_key)
+
+    @pytest.mark.anyio
+    async def test_on_error_uses_cached_key(
+        self, middleware, fake_redis, make_message, make_result
+    ):
+        from taskiq_deduplication.middleware import _CACHED_KEY_LABEL
+
+        msg = make_message()
+        await middleware.pre_send(msg)
+        cached_key = msg.labels.get(_CACHED_KEY_LABEL)
+        await middleware.on_error(msg, make_result(is_err=True), RuntimeError("boom"))
+        assert not await fake_redis.exists(cached_key)
+
+    @pytest.mark.anyio
+    async def test_cached_key_none_when_key_build_fails(self, middleware, make_message):
+        from taskiq_deduplication.middleware import _CACHED_KEY_LABEL
+
+        msg = make_message(kwargs={"dt": object()})
+        await middleware.pre_send(msg)
+        assert msg.labels[_CACHED_KEY_LABEL] is None
+
+    @pytest.mark.anyio
+    async def test_post_execute_noop_when_cached_key_is_none(
+        self, middleware, fake_redis, make_message, make_result
+    ):
+        msg = make_message(kwargs={"dt": object()})
+        await middleware.pre_send(msg)
+        await middleware.post_execute(msg, make_result())
+
+    @pytest.mark.anyio
+    async def test_on_error_noop_when_cached_key_is_none(
+        self, middleware, fake_redis, make_message, make_result
+    ):
+        msg = make_message(kwargs={"dt": object()})
+        await middleware.pre_send(msg)
+        await middleware.on_error(msg, make_result(is_err=True), RuntimeError("boom"))
+
+    @pytest.mark.anyio
+    async def test_release_if_owned_raises_without_redis(
+        self, middleware, make_message
+    ):
+        middleware._redis = None
+        with pytest.raises(RuntimeError, match="startup"):
+            await middleware._release_if_owned("some-key", "some-task")

@@ -17,6 +17,8 @@ DEDUP_TTL_LABEL = "deduplication_ttl"
 DEDUP_KEY_FIELDS_LABEL = "deduplication_key_fields"
 DEDUP_EXPLICIT_KEY_LABEL = "deduplication_key"
 
+_CACHED_KEY_LABEL = "__taskiq_dedup_cached_key"
+
 
 class DuplicateTaskError(Exception):
     """Raised when a task with identical name and kwargs is already queued or running."""
@@ -85,12 +87,24 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         if self._redis is not None:
             await self._redis.aclose()
 
+    @staticmethod
+    def _parse_bool_label(value: Any, default: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        return default
+
+    @staticmethod
+    def _parse_list_label(value: Any) -> list[str] | None:
+        if isinstance(value, list):
+            return value
+        return None
+
     def _build_deduplication_key(self, message: TaskiqMessage) -> str | None:
         explicit_key: str | None = message.labels.get(DEDUP_EXPLICIT_KEY_LABEL)
         if explicit_key is not None:
             return f"{self.key_prefix}:{explicit_key}"
 
-        key_fields: list[str] | None = message.labels.get(DEDUP_KEY_FIELDS_LABEL)
+        key_fields = self._parse_list_label(message.labels.get(DEDUP_KEY_FIELDS_LABEL))
         kwargs = (
             {k: v for k, v in message.kwargs.items() if k in key_fields}
             if key_fields is not None
@@ -107,7 +121,9 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         return f"{self.key_prefix}:{fingerprint}"
 
     def _is_enabled(self, labels: dict[str, Any]) -> bool:
-        return bool(labels.get(DEDUP_LABEL, self.default_deduplication))
+        return self._parse_bool_label(
+            labels.get(DEDUP_LABEL), self.default_deduplication
+        )
 
     def _get_ttl(self, labels: dict[str, Any]) -> int:
         return int(labels.get(DEDUP_TTL_LABEL, self.default_ttl))
@@ -123,6 +139,14 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         else:
             logger.debug("Skipped release of lock %s: not owned by this task", key)
 
+    @staticmethod
+    def _get_cached_key(message: TaskiqMessage) -> str | None:
+        return message.labels.get(_CACHED_KEY_LABEL)
+
+    @staticmethod
+    def _cache_key(message: TaskiqMessage, key: str | None) -> None:
+        message.labels[_CACHED_KEY_LABEL] = key
+
     async def pre_send(self, message: TaskiqMessage) -> TaskiqMessage:
         if not self._is_enabled(message.labels):
             return message
@@ -132,6 +156,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
                 "RedisDeduplicationMiddleware.startup() was never called."
             )
         key = self._build_deduplication_key(message)
+        self._cache_key(message, key)
         if key is None:
             logger.warning(
                 "Task %s has non-JSON-serializable kwargs; deduplication skipped."
@@ -163,7 +188,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
     ) -> None:
         if not self._is_enabled(message.labels):
             return
-        key = self._build_deduplication_key(message)
+        key = self._get_cached_key(message)
         if key is None:
             return
         await self._release_if_owned(key, message.task_id)
@@ -176,7 +201,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
     ) -> None:
         if not self._is_enabled(message.labels):
             return
-        key = self._build_deduplication_key(message)
+        key = self._get_cached_key(message)
         if key is None:
             return
         await self._release_if_owned(key, message.task_id)
