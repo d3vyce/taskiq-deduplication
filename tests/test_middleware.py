@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -309,6 +309,7 @@ class TestLifecycle:
         assert mw._redis is None
         with patch("redis.asyncio.Redis.from_url") as mock_from_url:
             mock_client = AsyncMock()
+            mock_client.register_script = MagicMock()
             mock_from_url.return_value = mock_client
             await mw.startup()
             mock_from_url.assert_called_once_with("redis://localhost")
@@ -349,6 +350,7 @@ class TestStartupRetry:
                 ConnectionError("fail"),
                 None,
             ]
+            mock_client.register_script = MagicMock()
             mock_from_url.return_value = mock_client
             await mw.startup()
             assert mw._redis is mock_client
@@ -378,6 +380,7 @@ class TestStartupRetry:
         )
         with patch("redis.asyncio.Redis.from_url") as mock_from_url:
             mock_client = AsyncMock()
+            mock_client.register_script = MagicMock()
             mock_from_url.return_value = mock_client
             await mw.startup()
             mock_client.ping.assert_called_once()
@@ -399,6 +402,7 @@ class TestStartupRetry:
                 ConnectionError("fail"),
                 None,
             ]
+            mock_client.register_script = MagicMock()
             mock_from_url.return_value = mock_client
             await mw.startup()
             assert mock_sleep.call_count == 2
