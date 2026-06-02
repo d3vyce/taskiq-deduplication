@@ -64,8 +64,12 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+anyio_mode = "auto"
 filterwarnings = [
     "ignore::DeprecationWarning",
+]
+markers = [
+    "integration: requires a live Redis at localhost:6379",
 ]
 
 [tool.coverage.run]

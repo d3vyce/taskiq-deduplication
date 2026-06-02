@@ -116,6 +116,19 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
             )
         return None
 
+    @staticmethod
+    def _parse_int_label(value: Any, default: int, label_name: str = "") -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid %r value %r (expected int); falling back to default (%d).",
+                label_name,
+                value,
+                default,
+            )
+            return default
+
     def _build_deduplication_key(self, message: TaskiqMessage) -> str | None:
         explicit_key: str | None = message.labels.get(DEDUP_EXPLICIT_KEY_LABEL)
         if explicit_key is not None:
@@ -145,16 +158,11 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         )
 
     def _get_ttl(self, labels: dict[str, Any]) -> int:
-        value = labels.get(DEDUP_TTL_LABEL, self.default_ttl)
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            logger.warning(
-                "Invalid deduplication_ttl value %r; falling back to default (%ds).",
-                value,
-                self.default_ttl,
-            )
-            return self.default_ttl
+        return self._parse_int_label(
+            labels.get(DEDUP_TTL_LABEL, self.default_ttl),
+            self.default_ttl,
+            DEDUP_TTL_LABEL,
+        )
 
     async def _release_if_owned(self, key: str, task_id: str) -> None:
         if self._redis is None:
@@ -212,6 +220,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         return message
 
     async def _release_lock(self, message: TaskiqMessage) -> None:
+        # The cached key is set by pre_send() only when deduplication is enabled.
         key = self._get_cached_key(message)
         if key is None:
             return
