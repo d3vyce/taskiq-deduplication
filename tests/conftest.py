@@ -1,5 +1,8 @@
+from typing import Awaitable, cast
+
 import pytest
 import fakeredis.aioredis
+from redis.asyncio import Redis
 from taskiq import TaskiqMessage, TaskiqResult
 
 
@@ -12,6 +15,21 @@ def anyio_backend():
 async def fake_redis():
     client = fakeredis.aioredis.FakeRedis()
     yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def real_redis():
+    client = Redis.from_url("redis://localhost:6379/15")
+    try:
+        await cast(Awaitable[bool], client.ping())
+    except Exception:
+        await client.aclose()
+        pytest.skip("Redis not available at localhost:6379")
+        return
+    await client.flushdb()
+    yield client
+    await client.flushdb()
     await client.aclose()
 
 
