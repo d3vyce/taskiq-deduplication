@@ -494,6 +494,58 @@ class TestLabelTypeParsing:
         key = middleware._build_deduplication_key(m)
         assert key is not None
 
+    @pytest.mark.anyio
+    async def test_invalid_bool_label_warns_and_uses_default(
+        self, middleware, make_message, caplog
+    ):
+        import logging
+
+        msg = make_message(labels={DEDUP_LABEL: "yes"})
+        with caplog.at_level(logging.WARNING, logger="taskiq_deduplication.middleware"):
+            await middleware.pre_send(msg)
+        assert any("yes" in r.message for r in caplog.records)
+
+    @pytest.mark.anyio
+    async def test_invalid_key_fields_label_warns_and_falls_back_to_all_kwargs(
+        self, middleware, make_message, caplog
+    ):
+        import logging
+
+        msg = make_message(kwargs={"a": 1}, labels={DEDUP_KEY_FIELDS_LABEL: "user_id"})
+        with caplog.at_level(logging.WARNING, logger="taskiq_deduplication.middleware"):
+            key = middleware._build_deduplication_key(msg)
+        assert any("user_id" in r.message for r in caplog.records)
+        # falls back to full-kwargs fingerprint — key must still be produced
+        assert key is not None
+
+    @pytest.mark.anyio
+    async def test_invalid_ttl_string_warns_and_uses_default(
+        self, middleware, fake_redis, make_message, caplog
+    ):
+        import logging
+
+        msg = make_message(labels={DEDUP_TTL_LABEL: "oops"})
+        with caplog.at_level(logging.WARNING, logger="taskiq_deduplication.middleware"):
+            await middleware.pre_send(msg)
+        assert any("oops" in r.message for r in caplog.records)
+        key = middleware._build_deduplication_key(msg)
+        ttl = await fake_redis.ttl(key)
+        assert 0 < ttl <= middleware.default_ttl
+
+    @pytest.mark.anyio
+    async def test_invalid_ttl_none_warns_and_uses_default(
+        self, middleware, fake_redis, make_message, caplog
+    ):
+        import logging
+
+        msg = make_message(labels={DEDUP_TTL_LABEL: None})
+        with caplog.at_level(logging.WARNING, logger="taskiq_deduplication.middleware"):
+            await middleware.pre_send(msg)
+        assert any("None" in r.message for r in caplog.records)
+        key = middleware._build_deduplication_key(msg)
+        ttl = await fake_redis.ttl(key)
+        assert 0 < ttl <= middleware.default_ttl
+
 
 class TestKeyCaching:
     @pytest.mark.anyio

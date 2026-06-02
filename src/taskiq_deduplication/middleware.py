@@ -90,15 +90,28 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
             await self._redis.aclose()
 
     @staticmethod
-    def _parse_bool_label(value: Any, default: bool) -> bool:
+    def _parse_bool_label(value: Any, default: bool, label_name: str = "") -> bool:
         if isinstance(value, bool):
             return value
+        if value is not None:
+            logger.warning(
+                "Invalid %r value %r (expected bool); falling back to default (%r).",
+                label_name,
+                value,
+                default,
+            )
         return default
 
     @staticmethod
-    def _parse_list_label(value: Any) -> list[str] | None:
+    def _parse_list_label(value: Any, label_name: str = "") -> list[str] | None:
         if isinstance(value, list):
             return value
+        if value is not None:
+            logger.warning(
+                "Invalid %r value %r (expected list[str]); ignoring.",
+                label_name,
+                value,
+            )
         return None
 
     def _build_deduplication_key(self, message: TaskiqMessage) -> str | None:
@@ -106,7 +119,9 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         if explicit_key is not None:
             return f"{self.key_prefix}:{explicit_key}"
 
-        key_fields = self._parse_list_label(message.labels.get(DEDUP_KEY_FIELDS_LABEL))
+        key_fields = self._parse_list_label(
+            message.labels.get(DEDUP_KEY_FIELDS_LABEL), DEDUP_KEY_FIELDS_LABEL
+        )
         kwargs = (
             {k: v for k, v in message.kwargs.items() if k in key_fields}
             if key_fields is not None
@@ -124,11 +139,20 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
 
     def _is_enabled(self, labels: dict[str, Any]) -> bool:
         return self._parse_bool_label(
-            labels.get(DEDUP_LABEL), self.default_deduplication
+            labels.get(DEDUP_LABEL), self.default_deduplication, DEDUP_LABEL
         )
 
     def _get_ttl(self, labels: dict[str, Any]) -> int:
-        return int(labels.get(DEDUP_TTL_LABEL, self.default_ttl))
+        value = labels.get(DEDUP_TTL_LABEL, self.default_ttl)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid deduplication_ttl value %r; falling back to default (%ds).",
+                value,
+                self.default_ttl,
+            )
+            return self.default_ttl
 
     async def _release_if_owned(self, key: str, task_id: str) -> None:
         if self._redis is None:
