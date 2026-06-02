@@ -455,6 +455,46 @@ class TestStartupRetry:
             assert mock_sleep.call_args_list[0].args[0] == 0.01
             assert mock_sleep.call_args_list[1].args[0] == 0.02
 
+    @pytest.mark.anyio
+    async def test_startup_closes_failed_clients(self):
+        mw = RedisDeduplicationMiddleware(
+            redis_url="redis://localhost",
+            startup_retries=3,
+            startup_retry_delay=0.01,
+        )
+        failed1, failed2, good = AsyncMock(), AsyncMock(), AsyncMock()
+        failed1.ping.side_effect = ConnectionError("fail")
+        failed2.ping.side_effect = ConnectionError("fail")
+        good.register_script = MagicMock()
+
+        with patch(
+            "redis.asyncio.Redis.from_url", side_effect=[failed1, failed2, good]
+        ):
+            await mw.startup()
+
+        failed1.aclose.assert_called_once()
+        failed2.aclose.assert_called_once()
+        good.aclose.assert_not_called()
+        assert mw._redis is good
+
+    @pytest.mark.anyio
+    async def test_startup_closes_client_when_all_retries_exhausted(self):
+        mw = RedisDeduplicationMiddleware(
+            redis_url="redis://localhost",
+            startup_retries=2,
+            startup_retry_delay=0.01,
+        )
+        failed1, failed2 = AsyncMock(), AsyncMock()
+        failed1.ping.side_effect = ConnectionError("fail")
+        failed2.ping.side_effect = ConnectionError("fail")
+
+        with patch("redis.asyncio.Redis.from_url", side_effect=[failed1, failed2]):
+            with pytest.raises(ConnectionError):
+                await mw.startup()
+
+        failed1.aclose.assert_called_once()
+        failed2.aclose.assert_called_once()
+
 
 class TestLabelTypeParsing:
     @pytest.mark.anyio
