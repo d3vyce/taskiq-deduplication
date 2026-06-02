@@ -60,12 +60,14 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
     async def startup(self) -> None:
         last_error: BaseException | None = None
         for attempt in range(self.startup_retries):
+            client = Redis.from_url(self.redis_url)
             try:
-                self._redis = Redis.from_url(self.redis_url)
-                await cast(Awaitable[bool], self._redis.ping())
+                await cast(Awaitable[bool], client.ping())
+                self._redis = client
                 self._release_script = self._redis.register_script(RELEASE_LUA_SCRIPT)
                 return
             except Exception as exc:
+                await client.aclose()
                 last_error = exc
                 if attempt < self.startup_retries - 1:
                     delay = self.startup_retry_delay * (2**attempt)
