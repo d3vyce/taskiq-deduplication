@@ -186,8 +186,6 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         return message
 
     async def _release_lock(self, message: TaskiqMessage) -> None:
-        if not self._is_enabled(message.labels):
-            return
         key = self._get_cached_key(message)
         if key is None:
             return
