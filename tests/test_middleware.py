@@ -261,6 +261,52 @@ class TestOnError:
         assert await fake_redis.exists(key)
 
 
+class TestSenderWorkerConfigMismatch:
+    @pytest.mark.anyio
+    async def test_post_execute_releases_lock_despite_worker_disabled_default(
+        self, fake_redis, make_message, make_result
+    ):
+        sender_mw = RedisDeduplicationMiddleware(
+            redis_url="redis://localhost", default_deduplication=True
+        )
+        sender_mw._redis = fake_redis
+
+        worker_mw = RedisDeduplicationMiddleware(
+            redis_url="redis://localhost", default_deduplication=False
+        )
+        worker_mw._redis = fake_redis
+
+        msg = make_message()
+        await sender_mw.pre_send(msg)
+        key = sender_mw._build_deduplication_key(msg)
+        assert await fake_redis.exists(key)
+
+        await worker_mw.post_execute(msg, make_result())
+        assert not await fake_redis.exists(key)
+
+    @pytest.mark.anyio
+    async def test_on_error_releases_lock_despite_worker_disabled_default(
+        self, fake_redis, make_message, make_result
+    ):
+        sender_mw = RedisDeduplicationMiddleware(
+            redis_url="redis://localhost", default_deduplication=True
+        )
+        sender_mw._redis = fake_redis
+
+        worker_mw = RedisDeduplicationMiddleware(
+            redis_url="redis://localhost", default_deduplication=False
+        )
+        worker_mw._redis = fake_redis
+
+        msg = make_message()
+        await sender_mw.pre_send(msg)
+        key = sender_mw._build_deduplication_key(msg)
+        assert await fake_redis.exists(key)
+
+        await worker_mw.on_error(msg, make_result(is_err=True), RuntimeError("boom"))
+        assert not await fake_redis.exists(key)
+
+
 class TestRedispatchAfterRelease:
     @pytest.mark.anyio
     async def test_redispatch_after_post_execute(
