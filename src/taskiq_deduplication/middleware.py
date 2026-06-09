@@ -8,7 +8,13 @@ from redis.asyncio import Redis
 from taskiq import TaskiqMessage, TaskiqResult
 from taskiq.abc.middleware import TaskiqMiddleware
 
-from .utils import RELEASE_LUA_SCRIPT, check_and_delete
+from .utils import (
+    RELEASE_LUA_SCRIPT,
+    check_and_delete,
+    parse_bool_label,
+    parse_int_label,
+    parse_list_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,50 +97,12 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         if self._redis is not None:
             await self._redis.aclose()
 
-    @staticmethod
-    def _parse_bool_label(value: Any, default: bool, label_name: str = "") -> bool:
-        if isinstance(value, bool):
-            return value
-        if value is not None:
-            logger.warning(
-                "Invalid %r value %r (expected bool); falling back to default (%r).",
-                label_name,
-                value,
-                default,
-            )
-        return default
-
-    @staticmethod
-    def _parse_list_label(value: Any, label_name: str = "") -> list[str] | None:
-        if isinstance(value, list):
-            return value
-        if value is not None:
-            logger.warning(
-                "Invalid %r value %r (expected list[str]); ignoring.",
-                label_name,
-                value,
-            )
-        return None
-
-    @staticmethod
-    def _parse_int_label(value: Any, default: int, label_name: str = "") -> int:
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            logger.warning(
-                "Invalid %r value %r (expected int); falling back to default (%d).",
-                label_name,
-                value,
-                default,
-            )
-            return default
-
     def _build_deduplication_key(self, message: TaskiqMessage) -> str | None:
         explicit_key: str | None = message.labels.get(DEDUP_EXPLICIT_KEY_LABEL)
         if explicit_key is not None:
             return f"{self.key_prefix}:{explicit_key}"
 
-        key_fields = self._parse_list_label(
+        key_fields = parse_list_label(
             message.labels.get(DEDUP_KEY_FIELDS_LABEL), DEDUP_KEY_FIELDS_LABEL
         )
         kwargs = (
@@ -153,12 +121,12 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         return f"{self.key_prefix}:{fingerprint}"
 
     def _is_enabled(self, labels: dict[str, Any]) -> bool:
-        return self._parse_bool_label(
+        return parse_bool_label(
             labels.get(DEDUP_LABEL), self.default_deduplication, DEDUP_LABEL
         )
 
     def _get_ttl(self, labels: dict[str, Any]) -> int:
-        return self._parse_int_label(
+        return parse_int_label(
             labels.get(DEDUP_TTL_LABEL, self.default_ttl),
             self.default_ttl,
             DEDUP_TTL_LABEL,

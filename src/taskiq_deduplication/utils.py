@@ -1,4 +1,8 @@
+import ast
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 RELEASE_LUA_SCRIPT = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
@@ -22,3 +26,54 @@ async def check_and_delete(script: Any, key: str, owner: str) -> bool:
     """
     released: int = await script(keys=[key], args=[owner])
     return bool(released)
+
+
+def parse_bool_label(value: Any, default: bool, label_name: str = "") -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lower = value.lower()
+        if lower == "true":
+            return True
+        if lower == "false":
+            return False
+    if value is not None:
+        logger.warning(
+            "Invalid %r value %r (expected bool); falling back to default (%r).",
+            label_name,
+            value,
+            default,
+        )
+    return default
+
+
+def parse_list_label(value: Any, label_name: str = "") -> list[str] | None:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = ast.literal_eval(value)
+            if isinstance(parsed, list):
+                return parsed
+        except (ValueError, SyntaxError):
+            pass
+    if value is not None:
+        logger.warning(
+            "Invalid %r value %r (expected list[str]); ignoring.",
+            label_name,
+            value,
+        )
+    return None
+
+
+def parse_int_label(value: Any, default: int, label_name: str = "") -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid %r value %r (expected int); falling back to default (%d).",
+            label_name,
+            value,
+            default,
+        )
+        return default

@@ -480,6 +480,22 @@ class TestLabelTypeParsing:
         with pytest.raises(DuplicateTaskError):
             await middleware.pre_send(make_message(labels={DEDUP_LABEL: True}))
 
+    async def test_string_bool_label_true_enables_dedup(self, middleware, make_message):
+        # taskiq's prepare_label() stringifies True → "True" before pre_send runs
+        msg = make_message(labels={DEDUP_LABEL: "True"})
+        await middleware.pre_send(msg)
+        with pytest.raises(DuplicateTaskError):
+            await middleware.pre_send(make_message(labels={DEDUP_LABEL: "True"}))
+
+    async def test_string_bool_label_false_disables_dedup(
+        self, fake_redis, make_message
+    ):
+        # taskiq's prepare_label() stringifies False → "False" before pre_send runs
+        mw = RedisDeduplicationMiddleware(redis_url="redis://localhost")
+        mw._redis = fake_redis
+        await mw.pre_send(make_message(labels={DEDUP_LABEL: "False"}))
+        await mw.pre_send(make_message(labels={DEDUP_LABEL: "False"}))
+
     async def test_key_fields_list_parsed_correctly(self, middleware, make_message):
         m1 = make_message(
             kwargs={"a": 1, "b": 2, "c": 3},
@@ -511,6 +527,20 @@ class TestLabelTypeParsing:
             await middleware.pre_send(msg)
         assert any("yes" in r.message for r in caplog.records)
 
+    async def test_string_true_lowercase_enables_dedup(self, middleware, make_message):
+        msg = make_message(labels={DEDUP_LABEL: "true"})
+        await middleware.pre_send(msg)
+        with pytest.raises(DuplicateTaskError):
+            await middleware.pre_send(make_message(labels={DEDUP_LABEL: "true"}))
+
+    async def test_string_false_lowercase_disables_dedup(
+        self, fake_redis, make_message
+    ):
+        mw = RedisDeduplicationMiddleware(redis_url="redis://localhost")
+        mw._redis = fake_redis
+        await mw.pre_send(make_message(labels={DEDUP_LABEL: "false"}))
+        await mw.pre_send(make_message(labels={DEDUP_LABEL: "false"}))
+
     async def test_invalid_key_fields_label_warns_and_falls_back_to_all_kwargs(
         self, middleware, make_message, caplog
     ):
@@ -522,6 +552,47 @@ class TestLabelTypeParsing:
         assert any("user_id" in r.message for r in caplog.records)
         # falls back to full-kwargs fingerprint — key must still be produced
         assert key is not None
+
+    async def test_key_fields_string_parses_to_non_list_warns(
+        self, middleware, make_message, caplog
+    ):
+        import logging
+
+        # ast.literal_eval succeeds but returns a dict, not a list
+        msg = make_message(kwargs={"a": 1}, labels={DEDUP_KEY_FIELDS_LABEL: "{'a': 1}"})
+        with caplog.at_level(logging.WARNING, logger="taskiq_deduplication.middleware"):
+            key = middleware._build_deduplication_key(msg)
+        assert any("{'a': 1}" in r.message for r in caplog.records)
+        assert key is not None
+
+    def test_stringified_key_fields_parsed_correctly(self, middleware, make_message):
+        # taskiq's prepare_label() stringifies ["a", "b"] → "['a', 'b']" before pre_send
+        m1 = make_message(
+            kwargs={"a": 1, "b": 2, "c": 3},
+            labels={DEDUP_KEY_FIELDS_LABEL: "['a', 'b']"},
+        )
+        m2 = make_message(
+            kwargs={"a": 1, "b": 2, "c": 999},
+            labels={DEDUP_KEY_FIELDS_LABEL: "['a', 'b']"},
+        )
+        assert middleware._build_deduplication_key(
+            m1
+        ) == middleware._build_deduplication_key(m2)
+
+    def test_stringified_key_fields_different_included_fields(
+        self, middleware, make_message
+    ):
+        m1 = make_message(
+            kwargs={"a": 1, "b": 2},
+            labels={DEDUP_KEY_FIELDS_LABEL: "['a']"},
+        )
+        m2 = make_message(
+            kwargs={"a": 99, "b": 2},
+            labels={DEDUP_KEY_FIELDS_LABEL: "['a']"},
+        )
+        assert middleware._build_deduplication_key(
+            m1
+        ) != middleware._build_deduplication_key(m2)
 
     async def test_invalid_ttl_string_warns_and_uses_default(
         self, middleware, fake_redis, make_message, caplog
