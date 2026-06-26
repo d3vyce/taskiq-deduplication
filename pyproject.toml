@@ -27,6 +27,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "pydantic>=2.0.0",
     "redis>=7.0.0",
     "taskiq>=0.12.0",
 ]
