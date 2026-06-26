@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import RedisDsn, TypeAdapter
 
 from taskiq_deduplication import DuplicateTaskError, RedisDeduplicationMiddleware
 from taskiq_deduplication.middleware import (
@@ -339,6 +340,17 @@ class TestLifecycle:
             mock_from_url.return_value = mock_client
             await mw.startup()
             mock_from_url.assert_called_once_with("redis://localhost")
+            assert mw._redis is mock_client
+
+    async def test_startup_accepts_redis_dsn(self):
+        dsn = TypeAdapter(RedisDsn).validate_python("redis://localhost:6379/0")
+        mw = RedisDeduplicationMiddleware(redis_url=dsn)
+        with patch("redis.asyncio.Redis.from_url") as mock_from_url:
+            mock_client = AsyncMock()
+            mock_client.register_script = MagicMock()
+            mock_from_url.return_value = mock_client
+            await mw.startup()
+            mock_from_url.assert_called_once_with("redis://localhost:6379/0")
             assert mw._redis is mock_client
 
     async def test_shutdown_closes_redis_client(self):

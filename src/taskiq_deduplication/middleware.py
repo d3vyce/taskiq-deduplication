@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Any, Awaitable, cast
 
+from pydantic import RedisDsn
 from redis.asyncio import Redis
 from taskiq import TaskiqMessage, TaskiqResult
 from taskiq.abc.middleware import TaskiqMiddleware
@@ -39,7 +40,8 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
     on completion or error.
 
     Attributes:
-        redis_url: Redis connection URL passed to ``Redis.from_url``.
+        redis_url: Redis connection URL (``str`` or ``RedisDsn``) passed to
+            ``Redis.from_url``.
         default_deduplication: Whether deduplication is enabled by default.
         default_ttl: Default lock TTL in seconds.
         key_prefix: Prefix for all Redis lock keys.
@@ -47,7 +49,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
 
     def __init__(
         self,
-        redis_url: str,
+        redis_url: str | RedisDsn,
         default_deduplication: bool = True,
         default_ttl: int = 300,
         key_prefix: str = "taskiq:deduplication",
@@ -66,7 +68,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
     async def startup(self) -> None:
         last_error: BaseException | None = None
         for attempt in range(self.startup_retries):
-            client = Redis.from_url(self.redis_url)
+            client = Redis.from_url(str(self.redis_url))
             try:
                 await cast(Awaitable[bool], client.ping())
                 self._redis = client

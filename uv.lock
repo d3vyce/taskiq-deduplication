@@ -1488,6 +1488,7 @@ name = "taskiq-deduplication"
 version = "1.0.5"
 source = { editable = "." }
 dependencies = [
+    { name = "pydantic" },
     { name = "redis" },
     { name = "taskiq" },
 ]
@@ -1520,6 +1521,7 @@ tests = [
 
 [package.metadata]
 requires-dist = [
+    { name = "pydantic", specifier = ">=2.0.0" },
     { name = "redis", specifier = ">=7.0.0" },
     { name = "taskiq", specifier = ">=0.12.0" },
 ]

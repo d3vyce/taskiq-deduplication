@@ -17,7 +17,7 @@ broker = ListQueueBroker("redis://localhost:6379").with_middlewares(
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `redis_url` | `str` | — | Redis connection URL passed to `Redis.from_url`. |
+| `redis_url` | `str \| RedisDsn` | — | Redis connection URL passed to `Redis.from_url`. Accepts a plain string or a pydantic [`RedisDsn`](https://docs.pydantic.dev/latest/api/networks/#pydantic.networks.RedisDsn). |
 | `default_deduplication` | `bool` | `True` | Whether deduplication is enabled for all tasks by default. Set `False` to opt-in per task instead of opting out. |
 | `default_ttl` | `int` | `300` | Default lock TTL in seconds. Overridden per task with the `deduplication_ttl` label. |
 | `key_prefix` | `str` | `"taskiq:deduplication"` | Prefix for all Redis lock keys. |
