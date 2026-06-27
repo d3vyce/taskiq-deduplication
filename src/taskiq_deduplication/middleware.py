@@ -144,11 +144,19 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         key_fields = parse_list_label(
             message.labels.get(DEDUP_KEY_FIELDS_LABEL), DEDUP_KEY_FIELDS_LABEL
         )
-        kwargs = (
-            {k: v for k, v in message.kwargs.items() if k in key_fields}
-            if key_fields is not None
-            else message.kwargs
-        )
+        if key_fields is not None:
+            missing = [field for field in key_fields if field not in message.kwargs]
+            if missing:
+                logger.warning(
+                    "Task %s requested deduplication_key_fields %r but they are "
+                    "absent from kwargs; they are dropped from the fingerprint, which "
+                    "may cause distinct calls to collide.",
+                    message.task_name,
+                    missing,
+                )
+            kwargs = {k: v for k, v in message.kwargs.items() if k in key_fields}
+        else:
+            kwargs = message.kwargs
         try:
             payload = json.dumps(
                 {"task": message.task_name, "kwargs": kwargs},
