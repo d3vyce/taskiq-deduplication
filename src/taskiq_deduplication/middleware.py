@@ -2,8 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import Awaitable
-from typing import Any, cast
+from typing import Any
 
 from pydantic import RedisDsn
 from redis.asyncio import Redis
@@ -105,7 +104,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         for attempt in range(self.startup_retries):
             client = Redis.from_url(str(self.redis_url))
             try:
-                await cast(Awaitable[bool], client.ping())
+                await client.ping()
                 self._redis = client
                 self._release_script = self._redis.register_script(RELEASE_LUA_SCRIPT)
                 self._refresh_script = self._redis.register_script(REFRESH_LUA_SCRIPT)

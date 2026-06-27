@@ -1,5 +1,3 @@
-from typing import Awaitable, cast
-
 import pytest
 import fakeredis.aioredis
 from redis.asyncio import Redis
@@ -22,7 +20,7 @@ async def fake_redis():
 async def real_redis():
     client = Redis.from_url("redis://localhost:6379/15")
     try:
-        await cast(Awaitable[bool], client.ping())
+        await client.ping()
     except Exception:
         await client.aclose()
         pytest.skip("Redis not available at localhost:6379")
