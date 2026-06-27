@@ -12,6 +12,14 @@ else
 end
 """
 
+REFRESH_LUA_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('expire', KEYS[1], ARGV[2])
+else
+    return 0
+end
+"""
+
 
 async def check_and_delete(script: Any, key: str, owner: str) -> bool:
     """Delete *key* only if its value equals *owner*.
@@ -26,6 +34,23 @@ async def check_and_delete(script: Any, key: str, owner: str) -> bool:
     """
     released: int = await script(keys=[key], args=[owner])
     return bool(released)
+
+
+async def check_and_refresh(script: Any, key: str, owner: str, ttl: int) -> bool:
+    """Extend *key*'s TTL to *ttl* only if its value equals *owner*.
+
+    Args:
+        script: Pre-registered Lua script object (from ``Redis.register_script``).
+        key: Lock key to refresh.
+        owner: Expected value of the key (task_id).
+        ttl: New TTL in seconds.
+
+    Returns:
+        True if the TTL was extended, False if the key is missing or owned by
+        another task.
+    """
+    refreshed: int = await script(keys=[key], args=[owner, ttl])
+    return bool(refreshed)
 
 
 def parse_bool_label(value: Any, default: bool, label_name: str = "") -> bool:

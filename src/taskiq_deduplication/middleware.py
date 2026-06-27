@@ -2,7 +2,8 @@ import asyncio
 import hashlib
 import json
 import logging
-from typing import Any, Awaitable, cast
+from collections.abc import Awaitable
+from typing import Any, cast
 
 from pydantic import RedisDsn
 from redis.asyncio import Redis
@@ -10,8 +11,10 @@ from taskiq import TaskiqMessage, TaskiqResult
 from taskiq.abc.middleware import TaskiqMiddleware
 
 from .utils import (
+    REFRESH_LUA_SCRIPT,
     RELEASE_LUA_SCRIPT,
     check_and_delete,
+    check_and_refresh,
     parse_bool_label,
     parse_int_label,
     parse_list_label,
@@ -45,6 +48,10 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         default_deduplication: Whether deduplication is enabled by default.
         default_ttl: Default lock TTL in seconds.
         key_prefix: Prefix for all Redis lock keys.
+        heartbeat: Whether to periodically re-extend the lock TTL during task
+            execution so long-running tasks keep their lock.
+        heartbeat_interval: Seconds between heartbeat refreshes. When ``None`` it
+            defaults to a third of the task's TTL (with a 1s floor).
     """
 
     def __init__(
@@ -55,6 +62,8 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         key_prefix: str = "taskiq:deduplication",
         startup_retries: int = 3,
         startup_retry_delay: float = 1.0,
+        heartbeat: bool = True,
+        heartbeat_interval: float | None = None,
     ) -> None:
         self.redis_url = redis_url
         self.default_deduplication = default_deduplication
@@ -62,8 +71,12 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         self.key_prefix = key_prefix
         self.startup_retries = startup_retries
         self.startup_retry_delay = startup_retry_delay
+        self.heartbeat = heartbeat
+        self.heartbeat_interval = heartbeat_interval
         self._redis: Redis | None = None
         self._release_script: Any = None
+        self._refresh_script: Any = None
+        self._heartbeats: dict[str, asyncio.Task[None]] = {}
 
     async def startup(self) -> None:
         last_error: BaseException | None = None
@@ -73,6 +86,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
                 await cast(Awaitable[bool], client.ping())
                 self._redis = client
                 self._release_script = self._redis.register_script(RELEASE_LUA_SCRIPT)
+                self._refresh_script = self._redis.register_script(REFRESH_LUA_SCRIPT)
                 return
             except Exception as exc:
                 await client.aclose()
@@ -96,6 +110,8 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         ) from last_error
 
     async def shutdown(self) -> None:
+        for task_id in list(self._heartbeats):
+            await self._cancel_heartbeat(task_id)
         if self._redis is not None:
             await self._redis.aclose()
 
@@ -147,6 +163,15 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         else:
             logger.debug("Skipped release of lock %s: not owned by this task", key)
 
+    async def _refresh_if_owned(self, key: str, task_id: str, ttl: int) -> bool:
+        if self._redis is None:
+            raise RuntimeError(
+                "RedisDeduplicationMiddleware.startup() was never called."
+            )
+        if self._refresh_script is None:
+            self._refresh_script = self._redis.register_script(REFRESH_LUA_SCRIPT)
+        return await check_and_refresh(self._refresh_script, key, task_id, ttl)
+
     @staticmethod
     def _get_cached_key(message: TaskiqMessage) -> str | None:
         return message.labels.get(_CACHED_KEY_LABEL)
@@ -189,7 +214,60 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         logger.debug("Lock %s acquired for task %s", key, message.task_name)
         return message
 
+    def _get_heartbeat_interval(self, ttl: int) -> float:
+        if self.heartbeat_interval is not None:
+            return self.heartbeat_interval
+        return max(ttl / 3, 1.0)
+
+    async def _heartbeat_loop(
+        self, key: str, task_id: str, ttl: int, interval: float
+    ) -> None:
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    refreshed = await self._refresh_if_owned(key, task_id, ttl)
+                except Exception as exc:
+                    logger.warning("Failed to refresh lock %s: %s", key, exc)
+                    continue
+                if refreshed:
+                    logger.debug("Refreshed lock %s (ttl=%ds)", key, ttl)
+                else:
+                    logger.warning(
+                        "Lock %s no longer owned by task %s; stopping heartbeat.",
+                        key,
+                        task_id,
+                    )
+                    return
+        except asyncio.CancelledError:
+            pass
+
+    async def pre_execute(self, message: TaskiqMessage) -> TaskiqMessage:
+        if not self.heartbeat:
+            return message
+        # The cached key is set by pre_send() only when deduplication is enabled.
+        key = self._get_cached_key(message)
+        if key is None:
+            return message
+        ttl = self._get_ttl(message.labels)
+        interval = self._get_heartbeat_interval(ttl)
+        self._heartbeats[message.task_id] = asyncio.create_task(
+            self._heartbeat_loop(key, message.task_id, ttl, interval)
+        )
+        return message
+
+    async def _cancel_heartbeat(self, task_id: str) -> None:
+        task = self._heartbeats.pop(task_id, None)
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
     async def _release_lock(self, message: TaskiqMessage) -> None:
+        await self._cancel_heartbeat(message.task_id)
         # The cached key is set by pre_send() only when deduplication is enabled.
         key = self._get_cached_key(message)
         if key is None:

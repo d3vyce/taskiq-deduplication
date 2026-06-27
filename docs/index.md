@@ -53,6 +53,7 @@ except DuplicateTaskError:
 - **Sender-side deduplication** — rejects duplicate tasks at dispatch time via a Redis lock, before they reach the broker.
 - **Atomic lock release** — lock is released on completion or error via a Lua check-and-delete; only the owning task can release its lock.
 - **Configurable TTL** — set a global default or override per task with the `deduplication_ttl` label.
+- **Lock heartbeat** — a background task re-extends the lock TTL while the task runs, so long-running tasks keep their lock instead of expiring mid-execution and admitting a duplicate.
 - **Explicit lock key** — pin any task to a fixed Redis key with `deduplication_key`, bypassing fingerprint computation entirely.
 - **Partial fingerprint** — deduplicate on a subset of kwargs with `deduplication_key_fields`, ignoring irrelevant arguments.
 - **Per-task opt-out** — disable deduplication for individual tasks with the `deduplication` label.
