@@ -103,6 +103,25 @@ except DuplicateTaskError:
     pass  # task is already queued or running
 ```
 
+`DuplicateTaskError` carries structured attributes describing the collision:
+
+```python
+try:
+    await my_task.kiq(user_id=42)
+except DuplicateTaskError as err:
+    logger.info(
+        "Skipped %s; already held by %s (key=%s)",
+        err.task_name,
+        err.holder_task_id,
+        err.key,
+    )
+```
+
+- `task_name` — name of the task that was rejected.
+- `key` — Redis lock key whose owner caused the rejection.
+- `holder_task_id` — `task_id` of the task currently holding the lock, or `None`
+  if it could not be retrieved.
+
 ## Per-task label overrides
 
 Labels can be set at the task level (applied to every call) or at call time.

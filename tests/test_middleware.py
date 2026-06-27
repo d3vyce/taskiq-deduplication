@@ -146,6 +146,34 @@ class TestPreSend:
         with pytest.raises(DuplicateTaskError):
             await middleware.pre_send(make_message())
 
+    async def test_duplicate_error_carries_structured_attributes(
+        self, middleware, make_message
+    ):
+        holder = make_message(task_id="holder-task")
+        await middleware.pre_send(holder)
+        key = middleware._build_deduplication_key(holder)
+        with pytest.raises(DuplicateTaskError) as exc_info:
+            await middleware.pre_send(make_message(task_id="loser-task"))
+        err = exc_info.value
+        assert err.task_name == "my_task"
+        assert err.key == key
+        assert err.holder_task_id == "holder-task"
+        assert key in str(err)
+
+    async def test_duplicate_error_holder_none_when_lock_released_in_race(
+        self, make_message
+    ):
+        # The lock is released between the failed SET NX and the GET lookup, so
+        # GET returns None and holder_task_id is left unset.
+        redis = AsyncMock()
+        redis.set.return_value = False
+        redis.get.return_value = None
+        mw = RedisDeduplicationMiddleware(redis_url="redis://localhost")
+        mw._redis = redis
+        with pytest.raises(DuplicateTaskError) as exc_info:
+            await mw.pre_send(make_message())
+        assert exc_info.value.holder_task_id is None
+
     async def test_deduplication_disabled_label(self, middleware, make_message):
         msg1 = make_message(labels={DEDUP_LABEL: False})
         msg2 = make_message(labels={DEDUP_LABEL: False})
