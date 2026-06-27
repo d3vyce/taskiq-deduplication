@@ -23,6 +23,8 @@ broker = ListQueueBroker("redis://localhost:6379").with_middlewares(
 | `key_prefix` | `str` | `"taskiq:deduplication"` | Prefix for all Redis lock keys. |
 | `startup_retries` | `int` | `3` | Number of connection attempts during broker startup. |
 | `startup_retry_delay` | `float` | `1.0` | Base delay in seconds between retries (exponential backoff: delay × 2^n). |
+| `heartbeat` | `bool` | `True` | Whether to periodically re-extend the lock TTL while the task runs (see [Long-running tasks](#long-running-tasks-and-the-heartbeat)). |
+| `heartbeat_interval` | `float \| None` | `None` | Seconds between heartbeat refreshes. When `None`, defaults to a third of the task's TTL (1s floor). |
 
 ```python
 broker = ListQueueBroker("redis://localhost:6379").with_middlewares(
@@ -36,6 +38,31 @@ broker = ListQueueBroker("redis://localhost:6379").with_middlewares(
     ),
 )
 ```
+
+## Long-running tasks and the heartbeat
+
+The lock is created with a TTL so a crashed worker cannot leak it forever. Without
+any refresh, a task that runs longer than its TTL would let the lock expire
+**mid-execution**, allowing a duplicate to be dispatched.
+
+To prevent this, the middleware starts a background **heartbeat** in `pre_execute`
+that re-extends the lock TTL while the task runs (atomically, only if the lock is
+still owned by the running task). It is cancelled when the task completes or fails.
+This means you do **not** need to size `default_ttl` to your slowest task — the TTL
+only needs to outlive a single heartbeat interval; it acts purely as a safety net
+for worker crashes.
+
+```python
+RedisDeduplicationMiddleware(
+    redis_url="redis://localhost:6379",
+    default_ttl=60,        # safety-net TTL; refreshed every ~20s while running
+    heartbeat_interval=20, # optional; defaults to default_ttl / 3
+)
+```
+
+If you disable the heartbeat (`heartbeat=False`), the invariant **TTL must exceed
+the slowest task** applies: set `default_ttl` (or the per-task `deduplication_ttl`
+label) above your worst-case task duration, or duplicates may slip through.
 
 ## Startup resilience
 

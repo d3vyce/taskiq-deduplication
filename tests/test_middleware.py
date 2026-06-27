@@ -704,6 +704,131 @@ class TestTTLExpiry:
         await middleware.pre_send(make_message())
 
 
+class TestHeartbeat:
+    async def test_pre_execute_starts_heartbeat(self, middleware, make_message):
+        msg = make_message()
+        await middleware.pre_send(msg)
+        await middleware.pre_execute(msg)
+        assert msg.task_id in middleware._heartbeats
+        await middleware._cancel_heartbeat(msg.task_id)
+
+    async def test_pre_execute_noop_when_heartbeat_disabled(
+        self, fake_redis, make_message
+    ):
+        mw = RedisDeduplicationMiddleware(
+            redis_url="redis://localhost", heartbeat=False
+        )
+        mw._redis = fake_redis
+        msg = make_message()
+        await mw.pre_send(msg)
+        await mw.pre_execute(msg)
+        assert msg.task_id not in mw._heartbeats
+
+    async def test_pre_execute_noop_without_cached_key(self, middleware, make_message):
+        # deduplication disabled -> pre_send never caches a key
+        msg = make_message(labels={DEDUP_LABEL: False})
+        await middleware.pre_send(msg)
+        await middleware.pre_execute(msg)
+        assert msg.task_id not in middleware._heartbeats
+
+    async def test_heartbeat_refreshes_ttl(self, middleware, fake_redis, make_message):
+        import asyncio
+
+        # short ttl, tiny heartbeat interval so the lock would expire without refresh
+        middleware.heartbeat_interval = 0.05
+        msg = make_message(labels={DEDUP_TTL_LABEL: 1})
+        await middleware.pre_send(msg)
+        key = middleware._build_deduplication_key(msg)
+        await middleware.pre_execute(msg)
+        try:
+            # let several heartbeats elapse — longer than the original 1s ttl
+            await asyncio.sleep(0.3)
+            assert await fake_redis.exists(key)
+            ttl = await fake_redis.ttl(key)
+            assert 0 < ttl <= 1
+        finally:
+            await middleware._cancel_heartbeat(msg.task_id)
+
+    async def test_release_lock_cancels_heartbeat(
+        self, middleware, fake_redis, make_message, make_result
+    ):
+        msg = make_message()
+        await middleware.pre_send(msg)
+        await middleware.pre_execute(msg)
+        assert msg.task_id in middleware._heartbeats
+        await middleware.post_execute(msg, make_result())
+        assert msg.task_id not in middleware._heartbeats
+        key = middleware._build_deduplication_key(msg)
+        assert not await fake_redis.exists(key)
+
+    async def test_heartbeat_stops_when_lock_lost(
+        self, middleware, fake_redis, make_message
+    ):
+        import asyncio
+
+        middleware.heartbeat_interval = 0.05
+        msg = make_message(labels={DEDUP_TTL_LABEL: 1})
+        await middleware.pre_send(msg)
+        key = middleware._build_deduplication_key(msg)
+        await middleware.pre_execute(msg)
+        # another task steals the key
+        await fake_redis.set(key, "other-task", ex=10)
+        await asyncio.sleep(0.15)
+        task = middleware._heartbeats.get(msg.task_id)
+        # heartbeat loop should have returned on its own
+        assert task is None or task.done()
+        await middleware._cancel_heartbeat(msg.task_id)
+
+    async def test_shutdown_cancels_heartbeats(self, fake_redis, make_message):
+        mw = RedisDeduplicationMiddleware(redis_url="redis://localhost")
+        mw._redis = fake_redis
+        msg = make_message()
+        await mw.pre_send(msg)
+        await mw.pre_execute(msg)
+        assert msg.task_id in mw._heartbeats
+        await mw.shutdown()
+        assert not mw._heartbeats
+
+    async def test_default_heartbeat_interval_is_third_of_ttl(self, middleware):
+        assert middleware._get_heartbeat_interval(300) == 100.0
+        assert middleware._get_heartbeat_interval(1) == 1.0
+
+    async def test_explicit_heartbeat_interval_overrides(self, fake_redis):
+        mw = RedisDeduplicationMiddleware(
+            redis_url="redis://localhost", heartbeat_interval=5.0
+        )
+        mw._redis = fake_redis
+        assert mw._get_heartbeat_interval(300) == 5.0
+
+    async def test_refresh_if_owned_raises_without_redis(self, middleware):
+        middleware._redis = None
+        with pytest.raises(RuntimeError, match="startup"):
+            await middleware._refresh_if_owned("some-key", "some-task", 60)
+
+    async def test_heartbeat_continues_after_refresh_error(
+        self, middleware, make_message, caplog
+    ):
+        import asyncio
+        import logging
+
+        middleware.heartbeat_interval = 0.02
+        # first refresh raises, subsequent ones succeed; the loop must survive
+        middleware._refresh_if_owned = AsyncMock(
+            side_effect=[ConnectionError("boom"), True, True, True]
+        )
+        msg = make_message()
+        await middleware.pre_send(msg)
+        with caplog.at_level(logging.WARNING, logger="taskiq_deduplication.middleware"):
+            await middleware.pre_execute(msg)
+            await asyncio.sleep(0.1)
+            task = middleware._heartbeats.get(msg.task_id)
+            # loop swallowed the error and kept running
+            assert task is not None and not task.done()
+            await middleware._cancel_heartbeat(msg.task_id)
+        assert any("Failed to refresh lock" in r.message for r in caplog.records)
+        assert middleware._refresh_if_owned.call_count >= 2
+
+
 class TestExplicitKeyEdgeCases:
     def test_empty_string_key_produces_prefix_only_key(self, middleware, make_message):
         m = make_message(labels={DEDUP_EXPLICIT_KEY_LABEL: ""})
