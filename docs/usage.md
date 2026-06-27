@@ -178,6 +178,10 @@ async def send_welcome_email(user_id: int, locale: str) -> None:
     ...
 ```
 
+If a listed field is absent from a task's kwargs, it is dropped from the
+fingerprint and a warning is logged, since this can make genuinely different
+calls collide on the same lock.
+
 ## Opting out per task
 
 ```python

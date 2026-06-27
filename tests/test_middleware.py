@@ -605,6 +605,33 @@ class TestLabelTypeParsing:
         assert any("{'a': 1}" in r.message for r in caplog.records)
         assert key is not None
 
+    async def test_missing_key_fields_warns(self, middleware, make_message, caplog):
+        import logging
+
+        msg = make_message(
+            kwargs={"order_id": 1},
+            labels={DEDUP_KEY_FIELDS_LABEL: ["user_id", "order_id"]},
+        )
+        with caplog.at_level(logging.WARNING, logger="taskiq_deduplication.middleware"):
+            key = middleware._build_deduplication_key(msg)
+        assert any("user_id" in r.message for r in caplog.records)
+        # the field that is present must not be reported as missing
+        assert not any("order_id" in r.message for r in caplog.records)
+        assert key is not None
+
+    async def test_present_key_fields_do_not_warn(
+        self, middleware, make_message, caplog
+    ):
+        import logging
+
+        msg = make_message(
+            kwargs={"user_id": 1, "order_id": 2},
+            labels={DEDUP_KEY_FIELDS_LABEL: ["user_id"]},
+        )
+        with caplog.at_level(logging.WARNING, logger="taskiq_deduplication.middleware"):
+            middleware._build_deduplication_key(msg)
+        assert not any("absent from kwargs" in r.message for r in caplog.records)
+
     def test_stringified_key_fields_parsed_correctly(self, middleware, make_message):
         # taskiq's prepare_label() stringifies ["a", "b"] → "['a', 'b']" before pre_send
         m1 = make_message(
