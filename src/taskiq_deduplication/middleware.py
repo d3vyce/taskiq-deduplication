@@ -31,7 +31,29 @@ _CACHED_KEY_LABEL = "__taskiq_dedup_cached_key"
 
 
 class DuplicateTaskError(Exception):
-    """Raised when a task with identical name and kwargs is already queued or running."""
+    """Raised when a task with identical name and kwargs is already queued or running.
+
+    Attributes:
+        task_name: Name of the task that was rejected.
+        key: Redis lock key whose owner caused the rejection.
+        holder_task_id: ``task_id`` of the task currently holding the lock, or
+            ``None`` if it could not be retrieved (e.g. the lock was released
+            between the failed acquisition and the lookup).
+    """
+
+    def __init__(
+        self,
+        task_name: str,
+        key: str,
+        holder_task_id: str | None = None,
+    ) -> None:
+        self.task_name = task_name
+        self.key = key
+        self.holder_task_id = holder_task_id
+        super().__init__(
+            f"Task {task_name!r} with the same arguments is already queued or "
+            f"running (key={key!r}, holder_task_id={holder_task_id!r})."
+        )
 
 
 class RedisDeduplicationMiddleware(TaskiqMiddleware):
@@ -202,13 +224,19 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         logger.debug("Acquiring lock %s for task %s", key, message.task_name)
         acquired = await self._redis.set(key, message.task_id, ex=ttl, nx=True)
         if not acquired:
+            holder_task_id = await self._redis.get(key)
+            if isinstance(holder_task_id, bytes):
+                holder_task_id = holder_task_id.decode()
             logger.warning(
-                "Duplicate task %s dropped (key=%s).",
+                "Duplicate task %s dropped (key=%s, holder_task_id=%s).",
                 message.task_name,
                 key,
+                holder_task_id,
             )
             raise DuplicateTaskError(
-                f"Task {message.task_name!r} with the same arguments is already queued or running."
+                task_name=message.task_name,
+                key=key,
+                holder_task_id=holder_task_id,
             )
 
         logger.debug("Lock %s acquired for task %s", key, message.task_name)
