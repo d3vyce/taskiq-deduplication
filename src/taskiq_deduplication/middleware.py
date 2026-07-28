@@ -137,29 +137,34 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
             await self._redis.aclose()
 
     def _build_deduplication_key(self, message: TaskiqMessage) -> str | None:
-        explicit_key: str | None = message.labels.get(DEDUP_EXPLICIT_KEY_LABEL)
+        return self._build_key(message.task_name, message.labels, message.kwargs)
+
+    def _build_key(
+        self, task_name: str, labels: dict[str, Any], kwargs: dict[str, Any]
+    ) -> str | None:
+        explicit_key: str | None = labels.get(DEDUP_EXPLICIT_KEY_LABEL)
         if explicit_key is not None:
             return f"{self.key_prefix}:{explicit_key}"
 
         key_fields = parse_list_label(
-            message.labels.get(DEDUP_KEY_FIELDS_LABEL), DEDUP_KEY_FIELDS_LABEL
+            labels.get(DEDUP_KEY_FIELDS_LABEL), DEDUP_KEY_FIELDS_LABEL
         )
         if key_fields is not None:
-            missing = [field for field in key_fields if field not in message.kwargs]
+            missing = [field for field in key_fields if field not in kwargs]
             if missing:
                 logger.warning(
                     "Task %s requested deduplication_key_fields %r but they are "
                     "absent from kwargs; they are dropped from the fingerprint, which "
                     "may cause distinct calls to collide.",
-                    message.task_name,
+                    task_name,
                     missing,
                 )
-            kwargs = {k: v for k, v in message.kwargs.items() if k in key_fields}
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in key_fields}
         else:
-            kwargs = message.kwargs
+            filtered_kwargs = kwargs
         try:
             payload = json.dumps(
-                {"task": message.task_name, "kwargs": kwargs},
+                {"task": task_name, "kwargs": filtered_kwargs},
                 sort_keys=True,
             )
         except TypeError:
@@ -172,6 +177,31 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
             labels.get(DEDUP_LABEL), self.default_deduplication, DEDUP_LABEL
         )
 
+    def _require_redis(self) -> Redis:
+        if self._redis is None:
+            raise RuntimeError(
+                "RedisDeduplicationMiddleware.startup() was never called."
+            )
+        return self._redis
+
+    @staticmethod
+    def _decode_task_id(value: bytes | str) -> str:
+        return value.decode() if isinstance(value, bytes) else value
+
+    async def _peek(
+        self, task_name: str, labels: dict[str, Any], kwargs: dict[str, Any]
+    ) -> tuple[str, str] | None:
+        if not self._is_enabled(labels):
+            return None
+        redis = self._require_redis()
+        key = self._build_key(task_name, labels, kwargs)
+        if key is None:
+            return None
+        holder_task_id = await redis.get(key)
+        if holder_task_id is None:
+            return None
+        return key, self._decode_task_id(holder_task_id)
+
     def _get_ttl(self, labels: dict[str, Any]) -> int:
         return parse_int_label(
             labels.get(DEDUP_TTL_LABEL, self.default_ttl),
@@ -180,12 +210,9 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         )
 
     async def _release_if_owned(self, key: str, task_id: str) -> None:
-        if self._redis is None:
-            raise RuntimeError(
-                "RedisDeduplicationMiddleware.startup() was never called."
-            )
+        redis = self._require_redis()
         if self._release_script is None:
-            self._release_script = self._redis.register_script(RELEASE_LUA_SCRIPT)
+            self._release_script = redis.register_script(RELEASE_LUA_SCRIPT)
         released = await check_and_delete(self._release_script, key, task_id)
         if released:
             logger.debug("Released lock %s", key)
@@ -193,12 +220,9 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
             logger.debug("Skipped release of lock %s: not owned by this task", key)
 
     async def _refresh_if_owned(self, key: str, task_id: str, ttl: int) -> bool:
-        if self._redis is None:
-            raise RuntimeError(
-                "RedisDeduplicationMiddleware.startup() was never called."
-            )
+        redis = self._require_redis()
         if self._refresh_script is None:
-            self._refresh_script = self._redis.register_script(REFRESH_LUA_SCRIPT)
+            self._refresh_script = redis.register_script(REFRESH_LUA_SCRIPT)
         return await check_and_refresh(self._refresh_script, key, task_id, ttl)
 
     @staticmethod
@@ -213,10 +237,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         if not self._is_enabled(message.labels):
             return message
 
-        if self._redis is None:
-            raise RuntimeError(
-                "RedisDeduplicationMiddleware.startup() was never called."
-            )
+        redis = self._require_redis()
         key = self._build_deduplication_key(message)
         self._cache_key(message, key)
         if key is None:
@@ -229,11 +250,11 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         ttl = self._get_ttl(message.labels)
 
         logger.debug("Acquiring lock %s for task %s", key, message.task_name)
-        acquired = await self._redis.set(key, message.task_id, ex=ttl, nx=True)
+        acquired = await redis.set(key, message.task_id, ex=ttl, nx=True)
         if not acquired:
-            holder_task_id = await self._redis.get(key)
-            if isinstance(holder_task_id, bytes):
-                holder_task_id = holder_task_id.decode()
+            holder_task_id = await redis.get(key)
+            if holder_task_id is not None:
+                holder_task_id = self._decode_task_id(holder_task_id)
             logger.warning(
                 "Duplicate task %s dropped (key=%s, holder_task_id=%s).",
                 message.task_name,

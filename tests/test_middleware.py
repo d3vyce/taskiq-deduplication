@@ -12,13 +12,6 @@ from taskiq_deduplication.middleware import (
 )
 
 
-@pytest.fixture
-def middleware(fake_redis):
-    mw = RedisDeduplicationMiddleware(redis_url="redis://localhost")
-    mw._redis = fake_redis
-    return mw
-
-
 class TestDefaultBuildDeduplicationKey:
     def test_same_kwargs_same_key(self, middleware, make_message):
         m1 = make_message(kwargs={"a": 1, "b": 2})
