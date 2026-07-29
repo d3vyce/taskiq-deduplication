@@ -10,10 +10,8 @@ def anyio_backend():
 
 
 @pytest.fixture
-async def fake_redis():
-    client = fakeredis.aioredis.FakeRedis()
-    yield client
-    await client.aclose()
+def fake_redis():
+    return fakeredis.aioredis.FakeRedis()
 
 
 @pytest.fixture
