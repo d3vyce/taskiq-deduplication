@@ -88,6 +88,12 @@ fingerprint. Any subsequent dispatch with the same fingerprint raises
 `DuplicateTaskError` while the lock is held. The lock is released automatically when
 the task completes or fails.
 
+The lock is acquired in two phases. It is first taken with a short grace TTL of 10
+seconds, then extended to its full TTL once the broker has accepted the message.
+taskiq fires no middleware hook when the send itself fails, so this bounds the
+damage: if the broker is unreachable, the lock of a task that was never queued
+expires within seconds instead of blocking its fingerprint for the full TTL.
+
 ## Handling duplicates
 
 When a duplicate is detected, the middleware logs a warning and raises

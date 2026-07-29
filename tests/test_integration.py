@@ -7,6 +7,7 @@ In CI a Redis service is started before the test step.
 import pytest
 
 from taskiq_deduplication import DuplicateTaskError, RedisDeduplicationMiddleware
+from taskiq_deduplication.middleware import SEND_GRACE_TTL
 from taskiq_deduplication.utils import REFRESH_LUA_SCRIPT, RELEASE_LUA_SCRIPT
 
 
@@ -64,9 +65,10 @@ async def test_lua_only_owner_can_release(mw, real_redis, make_message):
 async def test_ttl_is_applied(mw, real_redis, make_message):
     msg = make_message()
     await mw.pre_send(msg)
+    await mw.post_send(msg)
     key = mw._build_deduplication_key(msg)
     ttl = await real_redis.ttl(key)
-    assert 0 < ttl <= mw.default_ttl
+    assert SEND_GRACE_TTL < ttl <= mw.default_ttl
 
 
 @pytest.mark.integration
