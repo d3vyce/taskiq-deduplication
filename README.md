@@ -51,6 +51,7 @@ except DuplicateTaskError:
 ## Features
 
 - **Sender-side deduplication** — rejects duplicate tasks at dispatch time via a Redis lock, before they reach the broker.
+- **Handle to the winning task** — a rejected caller gets the winner's `task_id` on the error, so it can await the winner's result instead of re-kicking.
 - **Atomic lock release** — lock is released on completion or error via a Lua check-and-delete; only the owning task can release its lock.
 - **Configurable TTL** — set a global default or override per task with the `deduplication_ttl` label.
 - **Lock heartbeat** — a background task re-extends the lock TTL while the task runs, so long-running tasks keep their lock instead of expiring mid-execution and admitting a duplicate.
