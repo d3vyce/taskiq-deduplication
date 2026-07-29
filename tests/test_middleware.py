@@ -636,9 +636,11 @@ class TestStartupRetry:
         failed1.ping.side_effect = ConnectionError("fail")
         failed2.ping.side_effect = ConnectionError("fail")
 
-        with patch("redis.asyncio.Redis.from_url", side_effect=[failed1, failed2]):
-            with pytest.raises(ConnectionError):
-                await mw.startup()
+        with (
+            patch("redis.asyncio.Redis.from_url", side_effect=[failed1, failed2]),
+            pytest.raises(ConnectionError),
+        ):
+            await mw.startup()
 
         failed1.aclose.assert_called_once()
         failed2.aclose.assert_called_once()
