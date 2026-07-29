@@ -56,8 +56,8 @@ for worker crashes.
 ```python
 RedisDeduplicationMiddleware(
     redis_url="redis://localhost:6379",
-    default_ttl=60,        # safety-net TTL; refreshed every ~20s while running
-    heartbeat_interval=20, # optional; defaults to default_ttl / 3
+    default_ttl=60,  # safety-net TTL; refreshed every ~20s while running
+    heartbeat_interval=20,  # optional; defaults to default_ttl / 3
 )
 ```
 
@@ -194,8 +194,7 @@ Labels can be set at the task level (applied to every call) or at call time.
 
 ```python
 @broker.task(deduplication_ttl=60)
-async def my_task(user_id: int) -> None:
-    ...
+async def my_task(user_id: int) -> None: ...
 ```
 
 ### Call-level (kicker)
@@ -232,8 +231,7 @@ the kwargs:
 
 ```python
 @broker.task(deduplication_key="send-welcome-email")
-async def send_welcome_email(user_id: int, locale: str) -> None:
-    ...
+async def send_welcome_email(user_id: int, locale: str) -> None: ...
 ```
 
 All calls to this task share a single lock, no matter what arguments are passed.
@@ -246,8 +244,7 @@ duplicates:
 
 ```python
 @broker.task(deduplication_key_fields=["user_id"])
-async def send_welcome_email(user_id: int, locale: str) -> None:
-    ...
+async def send_welcome_email(user_id: int, locale: str) -> None: ...
 ```
 
 If a listed field is absent from a task's kwargs, it is dropped from the
@@ -262,6 +259,5 @@ A warning is logged if the task is called with positional arguments anyway.
 
 ```python
 @broker.task(deduplication=False)
-async def always_run(payload: str) -> None:
-    ...
+async def always_run(payload: str) -> None: ...
 ```

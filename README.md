@@ -34,9 +34,10 @@ broker = ListQueueBroker("redis://localhost:6379").with_middlewares(
     RedisDeduplicationMiddleware(redis_url="redis://localhost:6379"),
 )
 
+
 @broker.task
-async def send_report(user_id: int) -> None:
-    ...
+async def send_report(user_id: int) -> None: ...
+
 
 # First dispatch acquires the lock — succeeds.
 await send_report.kiq(user_id=42)

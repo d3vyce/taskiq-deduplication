@@ -1,5 +1,5 @@
-import pytest
 import fakeredis.aioredis
+import pytest
 from redis.asyncio import Redis
 from taskiq import TaskiqMessage, TaskiqResult
 
