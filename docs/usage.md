@@ -152,6 +152,40 @@ except DuplicateTaskError as err:
 - `holder_task_id` — `task_id` of the task currently holding the lock, or `None`
   if it could not be retrieved.
 
+### Waiting for the winning task
+
+`holder_task_id` is the `task_id` of the task that won the lock, so a rejected caller
+can build a handle to it and await *its* result instead of re-kicking:
+
+```python
+from taskiq import AsyncTaskiqTask
+from taskiq_deduplication import DuplicateTaskError
+
+try:
+    handle = await my_task.kiq(user_id=42)
+except DuplicateTaskError as err:
+    if err.holder_task_id is None:
+        raise  # the lock was released in the meantime; retry the kiq() instead
+    handle = AsyncTaskiqTask(err.holder_task_id, broker.result_backend)
+
+result = await handle.wait_result()  # resolves when the winner finishes
+```
+
+Both callers now observe the same single execution, which is what you usually want
+from deduplication in a request handler: the second request waits for the first one's
+answer rather than being told to go away.
+
+Three caveats:
+
+- **The result backend must be shared and persistent.** `InmemoryResultBackend` only
+  works within a single process; across processes the loser cannot see the winner's
+  result.
+- **The winner's result must not have expired.** If your backend sets a result TTL,
+  a loser that waits longer than that gets nothing back.
+- **`holder_task_id` can be `None`**, when the lock is released between the failed
+  `SET NX` and the follow-up `GET`. Fall back to re-kicking, as above: the lock is
+  free again, so the retry acquires it.
+
 ## Per-task label overrides
 
 Labels can be set at the task level (applied to every call) or at call time.
