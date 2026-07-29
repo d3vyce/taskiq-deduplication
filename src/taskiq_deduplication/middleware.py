@@ -25,6 +25,7 @@ DEDUP_LABEL = "deduplication"
 DEDUP_TTL_LABEL = "deduplication_ttl"
 DEDUP_KEY_FIELDS_LABEL = "deduplication_key_fields"
 DEDUP_EXPLICIT_KEY_LABEL = "deduplication_key"
+SEND_GRACE_TTL = 10
 
 _CACHED_KEY_LABEL = "__taskiq_dedup_cached_key"
 
@@ -238,7 +239,9 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         ttl = self._get_ttl(message.labels)
 
         logger.debug("Acquiring lock %s for task %s", key, message.task_name)
-        acquired = await self._redis.set(key, message.task_id, ex=ttl, nx=True)
+        acquired = await self._redis.set(
+            key, message.task_id, ex=min(ttl, SEND_GRACE_TTL), nx=True
+        )
         if not acquired:
             holder_task_id = await self._redis.get(key)
             if isinstance(holder_task_id, bytes):
@@ -257,6 +260,29 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
 
         logger.debug("Lock %s acquired for task %s", key, message.task_name)
         return message
+
+    async def post_send(self, message: TaskiqMessage) -> None:
+        # The cached key is set by pre_send() only when deduplication is enabled.
+        key = self._get_cached_key(message)
+        if key is None:
+            return
+        ttl = self._get_ttl(message.labels)
+        if ttl <= SEND_GRACE_TTL:
+            return
+        try:
+            # Returns False when a fast worker already ran and released the lock.
+            extended = await self._refresh_if_owned(key, message.task_id, ttl)
+        except Exception as exc:
+            # The task is already queued; never fail the send. The lock just keeps
+            # its grace TTL.
+            logger.warning("Failed to extend lock %s after send: %s", key, exc)
+            return
+        logger.debug(
+            "Lock %s %s to the full TTL (%ds) after send",
+            key,
+            "extended" if extended else "not extended",
+            ttl,
+        )
 
     def _get_heartbeat_interval(self, ttl: int) -> float:
         if self.heartbeat_interval is not None:

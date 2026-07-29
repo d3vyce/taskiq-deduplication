@@ -9,6 +9,7 @@ from taskiq_deduplication.middleware import (
     DEDUP_KEY_FIELDS_LABEL,
     DEDUP_LABEL,
     DEDUP_TTL_LABEL,
+    SEND_GRACE_TTL,
 )
 
 
@@ -214,9 +215,10 @@ class TestPreSend:
     async def test_ttl_applied(self, middleware, fake_redis, make_message):
         msg = make_message(labels={DEDUP_TTL_LABEL: 42})
         await middleware.pre_send(msg)
+        await middleware.post_send(msg)
         key = middleware._build_deduplication_key(msg)
         ttl = await fake_redis.ttl(key)
-        assert 0 < ttl <= 42
+        assert SEND_GRACE_TTL < ttl <= 42
 
     async def test_different_kwargs_both_pass(self, middleware, make_message):
         await middleware.pre_send(make_message(kwargs={"x": 1}))
@@ -235,9 +237,69 @@ class TestPreSend:
         mw._redis = fake_redis
         msg = make_message()
         await mw.pre_send(msg)
+        await mw.post_send(msg)
         key = mw._build_deduplication_key(msg)
         ttl = await fake_redis.ttl(key)
-        assert 0 < ttl <= 77
+        assert SEND_GRACE_TTL < ttl <= 77
+
+
+class TestPostSend:
+    async def test_pre_send_only_uses_grace_ttl(
+        self, middleware, fake_redis, make_message
+    ):
+        msg = make_message(labels={DEDUP_TTL_LABEL: 300})
+        await middleware.pre_send(msg)
+        key = middleware._build_deduplication_key(msg)
+        assert 0 < await fake_redis.ttl(key) <= SEND_GRACE_TTL
+
+    async def test_post_send_extends_to_full_ttl(
+        self, middleware, fake_redis, make_message
+    ):
+        msg = make_message(labels={DEDUP_TTL_LABEL: 300})
+        await middleware.pre_send(msg)
+        await middleware.post_send(msg)
+        key = middleware._build_deduplication_key(msg)
+        assert await fake_redis.ttl(key) > SEND_GRACE_TTL
+
+    async def test_post_send_does_not_extend_short_ttl(
+        self, middleware, fake_redis, make_message
+    ):
+        msg = make_message(labels={DEDUP_TTL_LABEL: 5})
+        await middleware.pre_send(msg)
+        await middleware.post_send(msg)
+        key = middleware._build_deduplication_key(msg)
+        assert 0 < await fake_redis.ttl(key) <= 5
+
+    async def test_post_send_does_not_resurrect_released_lock(
+        self, middleware, fake_redis, make_message, make_result
+    ):
+        msg = make_message(labels={DEDUP_TTL_LABEL: 300})
+        await middleware.pre_send(msg)
+        await middleware.post_execute(msg, make_result())
+        await middleware.post_send(msg)
+        key = middleware._build_deduplication_key(msg)
+        assert not await fake_redis.exists(key)
+
+    async def test_post_send_survives_redis_error(
+        self, middleware, fake_redis, make_message
+    ):
+        msg = make_message(labels={DEDUP_TTL_LABEL: 300})
+        await middleware.pre_send(msg)
+        middleware._refresh_script = AsyncMock(side_effect=ConnectionError("boom"))
+        await middleware.post_send(msg)  # should not raise
+        key = middleware._build_deduplication_key(msg)
+        assert 0 < await fake_redis.ttl(key) <= SEND_GRACE_TTL
+
+    async def test_post_send_deduplication_disabled_noop(
+        self, fake_redis, make_message
+    ):
+        mw = RedisDeduplicationMiddleware(
+            redis_url="redis://localhost", default_deduplication=False
+        )
+        mw._redis = fake_redis
+        msg = make_message()
+        await mw.pre_send(msg)
+        await mw.post_send(msg)  # should not raise
 
 
 class TestPostExecute:
