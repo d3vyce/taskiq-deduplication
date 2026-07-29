@@ -33,13 +33,15 @@ async def real_redis():
 
 @pytest.fixture
 def make_message():
-    def _make(task_name="my_task", task_id="task-1", labels=None, kwargs=None):
+    def _make(
+        task_name="my_task", task_id="task-1", labels=None, kwargs=None, args=None
+    ):
         return TaskiqMessage(
             task_id=task_id,
             task_name=task_name,
             labels=labels or {},
             labels_types={},
-            args=[],
+            args=args or [],
             kwargs=kwargs or {},
         )
 

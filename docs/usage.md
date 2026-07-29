@@ -147,11 +147,19 @@ await my_task.kicker().with_labels(deduplication_ttl=60).kiq(user_id=42)
 | `deduplication` | `bool` | Set `False` to opt out of deduplication entirely for this task. |
 | `deduplication_ttl` | `int` | Lock TTL in seconds. Overrides the middleware `default_ttl`. |
 | `deduplication_key` | `str` | Explicit lock key. Skips fingerprint computation entirely. |
-| `deduplication_key_fields` | `list[str]` | Subset of kwargs to include in the fingerprint. Ignored if `deduplication_key` is set. |
+| `deduplication_key_fields` | `list[str]` | Subset of kwargs to include in the fingerprint. Positional arguments are excluded. Ignored if `deduplication_key` is set. |
 
 ## Fingerprint and key customisation
 
-By default the lock key is a SHA-256 fingerprint of the task name and all kwargs.
+By default the lock key is a SHA-256 fingerprint of the task name, its positional
+arguments and all kwargs.
+
+!!! warning "Positional and keyword calls fingerprint differently"
+
+    taskiq serialises arguments as they were passed, without binding them to the
+    task signature. `my_task.kiq(42)` and `my_task.kiq(user_id=42)` are therefore
+    *not* recognised as duplicates of each other. Call a deduplicated task
+    consistently, preferably always with keyword arguments.
 
 ### Explicit key
 
@@ -181,6 +189,10 @@ async def send_welcome_email(user_id: int, locale: str) -> None:
 If a listed field is absent from a task's kwargs, it is dropped from the
 fingerprint and a warning is logged, since this can make genuinely different
 calls collide on the same lock.
+
+Positional arguments are excluded from the fingerprint entirely when this label is
+set: you asked to deduplicate on named fields, so pass them as keyword arguments.
+A warning is logged if the task is called with positional arguments anyway.
 
 ## Opting out per task
 

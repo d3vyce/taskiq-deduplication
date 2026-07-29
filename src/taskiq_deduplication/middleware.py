@@ -154,12 +154,21 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
                     message.task_name,
                     missing,
                 )
+            if message.args:
+                logger.warning(
+                    "Task %s was called with positional arguments but uses "
+                    "deduplication_key_fields; positional arguments are excluded "
+                    "from the fingerprint.",
+                    message.task_name,
+                )
             kwargs = {k: v for k, v in message.kwargs.items() if k in key_fields}
+            args: list[Any] = []
         else:
             kwargs = message.kwargs
+            args = message.args
         try:
             payload = json.dumps(
-                {"task": message.task_name, "kwargs": kwargs},
+                {"task": message.task_name, "args": args, "kwargs": kwargs},
                 sort_keys=True,
             )
         except TypeError:
