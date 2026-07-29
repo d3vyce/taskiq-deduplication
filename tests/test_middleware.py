@@ -86,6 +86,27 @@ class TestDefaultBuildDeduplicationKey:
             m1
         ) == middleware._build_deduplication_key(m2)
 
+    def test_different_args_different_key(self, middleware, make_message):
+        m1 = make_message(args=["a"])
+        m2 = make_message(args=["b"])
+        assert middleware._build_deduplication_key(
+            m1
+        ) != middleware._build_deduplication_key(m2)
+
+    def test_arg_order_matters(self, middleware, make_message):
+        m1 = make_message(args=["a", "b"])
+        m2 = make_message(args=["b", "a"])
+        assert middleware._build_deduplication_key(
+            m1
+        ) != middleware._build_deduplication_key(m2)
+
+    def test_key_fields_ignores_args(self, middleware, make_message):
+        m1 = make_message(args=["a"], labels={DEDUP_KEY_FIELDS_LABEL: ["x"]})
+        m2 = make_message(args=["b"], labels={DEDUP_KEY_FIELDS_LABEL: ["x"]})
+        assert middleware._build_deduplication_key(
+            m1
+        ) == middleware._build_deduplication_key(m2)
+
     def test_key_prefix_in_output(self, make_message):
         mw = RedisDeduplicationMiddleware(
             redis_url="redis://localhost", key_prefix="myapp:locks"

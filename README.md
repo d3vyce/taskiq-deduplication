@@ -55,7 +55,7 @@ except DuplicateTaskError:
 - **Configurable TTL** — set a global default or override per task with the `deduplication_ttl` label.
 - **Lock heartbeat** — a background task re-extends the lock TTL while the task runs, so long-running tasks keep their lock instead of expiring mid-execution and admitting a duplicate.
 - **Explicit lock key** — pin any task to a fixed Redis key with `deduplication_key`, bypassing fingerprint computation entirely.
-- **Partial fingerprint** — deduplicate on a subset of kwargs with `deduplication_key_fields`, ignoring irrelevant arguments.
+- **Partial fingerprint** — deduplicate on a subset of kwargs with `deduplication_key_fields`, ignoring irrelevant arguments (positional arguments are excluded).
 - **Per-task opt-out** — disable deduplication for individual tasks with the `deduplication` label.
 - **Startup resilience** — automatic reconnection with exponential backoff if Redis is unavailable at broker startup.
 
