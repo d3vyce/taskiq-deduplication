@@ -302,6 +302,60 @@ class TestPostSend:
         await mw.post_send(msg)  # should not raise
 
 
+class TestFailOpen:
+    @staticmethod
+    def _broken_middleware(fail_open):
+        mw = RedisDeduplicationMiddleware(
+            redis_url="redis://localhost", fail_open=fail_open
+        )
+        mw._redis = MagicMock()
+        mw._redis.set = AsyncMock(side_effect=ConnectionError("redis is down"))
+        return mw
+
+    async def test_redis_error_raises_by_default(self, make_message):
+        mw = self._broken_middleware(fail_open=False)
+        with pytest.raises(ConnectionError):
+            await mw.pre_send(make_message())
+
+    async def test_redis_error_lets_task_through_when_enabled(
+        self, make_message, caplog
+    ):
+        mw = self._broken_middleware(fail_open=True)
+        msg = make_message()
+        with caplog.at_level("WARNING"):
+            assert await mw.pre_send(msg) is msg
+        assert "fail_open" in caplog.text
+
+    async def test_duplicates_still_raise_when_enabled(self, fake_redis, make_message):
+        mw = RedisDeduplicationMiddleware(redis_url="redis://localhost", fail_open=True)
+        mw._redis = fake_redis
+        await mw.pre_send(make_message())
+        with pytest.raises(DuplicateTaskError):
+            await mw.pre_send(make_message())
+
+    async def test_fail_open_leaves_nothing_to_clean_up(
+        self, make_message, make_result
+    ):
+        mw = self._broken_middleware(fail_open=True)
+        msg = make_message()
+        await mw.pre_send(msg)
+        # None of the downstream hooks may touch the lock that was never taken.
+        await mw.post_send(msg)
+        await mw.pre_execute(msg)
+        await mw.post_execute(msg, make_result())
+        assert mw._heartbeats == {}
+
+    async def test_release_error_does_not_propagate(
+        self, middleware, make_message, make_result
+    ):
+        msg = make_message()
+        await middleware.pre_send(msg)
+        middleware._release_script = AsyncMock(side_effect=ConnectionError("boom"))
+        # The task already ran: raising here would lose its result.
+        await middleware.post_execute(msg, make_result())
+        await middleware.on_error(msg, make_result(is_err=True), RuntimeError("boom"))
+
+
 class TestPostExecute:
     async def test_releases_lock(
         self, middleware, fake_redis, make_message, make_result

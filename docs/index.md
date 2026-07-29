@@ -58,6 +58,7 @@ except DuplicateTaskError:
 - **Partial fingerprint** — deduplicate on a subset of kwargs with `deduplication_key_fields`, ignoring irrelevant arguments (positional arguments are excluded).
 - **Per-task opt-out** — disable deduplication for individual tasks with the `deduplication` label.
 - **Startup resilience** — automatic reconnection with exponential backoff if Redis is unavailable at broker startup.
+- **Fail-open mode** — opt in with `fail_open` to keep dispatching tasks when Redis is unreachable at runtime, trading deduplication for availability.
 
 ## License
 
