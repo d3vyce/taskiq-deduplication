@@ -25,6 +25,7 @@ broker = ListQueueBroker("redis://localhost:6379").with_middlewares(
 | `startup_retry_delay` | `float` | `1.0` | Base delay in seconds between retries (exponential backoff: delay × 2^n). |
 | `heartbeat` | `bool` | `True` | Whether to periodically re-extend the lock TTL while the task runs (see [Long-running tasks](#long-running-tasks-and-the-heartbeat)). |
 | `heartbeat_interval` | `float \| None` | `None` | Seconds between heartbeat refreshes. When `None`, defaults to a third of the task's TTL (1s floor). |
+| `fail_open` | `bool` | `False` | Whether a Redis error while acquiring the lock lets the task through instead of aborting the send (see [Fail-open](#fail-open)). |
 
 ```python
 broker = ListQueueBroker("redis://localhost:6379").with_middlewares(
@@ -80,6 +81,29 @@ RedisDeduplicationMiddleware(
     startup_retry_delay=2.0,
 )
 ```
+
+## Fail-open
+
+By default a Redis error while acquiring the lock aborts the send, so an unreachable
+Redis blocks task dispatch entirely. Set `fail_open=True` to trade deduplication for
+availability: the error is logged and the task is dispatched without a lock.
+
+```python
+RedisDeduplicationMiddleware(
+    redis_url="redis://localhost:6379",
+    fail_open=True,
+)
+```
+
+This applies to Redis errors only. A duplicate that is successfully detected still
+raises `DuplicateTaskError`, and while Redis is down duplicates can get through, so
+enable it only for tasks that tolerate running twice.
+
+Redis errors after the task has been queued are always logged and swallowed,
+regardless of `fail_open`: failing to extend the lock after the send, to refresh it
+from the heartbeat, or to release it once the task ends never raises. Raising there
+would lose the result of a task that already ran; the lock expires on its TTL
+instead.
 
 ## How it works
 

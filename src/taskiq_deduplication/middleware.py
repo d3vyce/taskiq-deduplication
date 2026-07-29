@@ -74,6 +74,9 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
             execution so long-running tasks keep their lock.
         heartbeat_interval: Seconds between heartbeat refreshes. When ``None`` it
             defaults to a third of the task's TTL (with a 1s floor).
+        fail_open: Whether a Redis error while acquiring the lock lets the task
+            through instead of aborting the send. Detected duplicates still raise
+            ``DuplicateTaskError``.
     """
 
     def __init__(
@@ -86,6 +89,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         startup_retry_delay: float = 1.0,
         heartbeat: bool = True,
         heartbeat_interval: float | None = None,
+        fail_open: bool = False,
     ) -> None:
         self.redis_url = redis_url
         self.default_deduplication = default_deduplication
@@ -95,6 +99,7 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         self.startup_retry_delay = startup_retry_delay
         self.heartbeat = heartbeat
         self.heartbeat_interval = heartbeat_interval
+        self.fail_open = fail_open
         self._redis: Redis | None = None
         self._release_script: Any = None
         self._refresh_script: Any = None
@@ -239,11 +244,25 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         ttl = self._get_ttl(message.labels)
 
         logger.debug("Acquiring lock %s for task %s", key, message.task_name)
-        acquired = await self._redis.set(
-            key, message.task_id, ex=min(ttl, SEND_GRACE_TTL), nx=True
-        )
+        try:
+            acquired = await self._redis.set(
+                key, message.task_id, ex=min(ttl, SEND_GRACE_TTL), nx=True
+            )
+            holder_task_id = None if acquired else await self._redis.get(key)
+        except Exception as exc:
+            if not self.fail_open:
+                raise
+            logger.warning(
+                "Redis is unavailable (%s); dispatching task %s without "
+                "deduplication (fail_open is enabled).",
+                exc,
+                message.task_name,
+            )
+            # No lock was taken: nothing downstream should release or refresh one.
+            self._cache_key(message, None)
+            return message
+
         if not acquired:
-            holder_task_id = await self._redis.get(key)
             if isinstance(holder_task_id, bytes):
                 holder_task_id = holder_task_id.decode()
             logger.warning(
@@ -342,7 +361,12 @@ class RedisDeduplicationMiddleware(TaskiqMiddleware):
         key = self._get_cached_key(message)
         if key is None:
             return
-        await self._release_if_owned(key, message.task_id)
+        try:
+            await self._release_if_owned(key, message.task_id)
+        except Exception as exc:
+            # The task already ran: raising here would lose its result in the
+            # receiver. The lock expires on its TTL instead.
+            logger.warning("Failed to release lock %s: %s", key, exc)
 
     async def post_execute(
         self,
